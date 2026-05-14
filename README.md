@@ -4,18 +4,22 @@ Send only the bytes that changed.
 
 Deltasync is a high-performance delta-based file synchronization engine. It uses a rolling Adler-32 hash to detect shifted content in O(1) per byte, then verifies matches with SHA-256. This means a 4 GB file with a 1% edit transfers in 40 MB, not 4 GB.
 
-## 🚀 Key Features & Production Optimizations
+## 🚀 Key Features & Production Architecture
 
-*   **Rsync Algorithm Implementation**: Uses a two-level match (Adler-32 + SHA-256) to perform rolling hash block deduplication.
-*   **Object Storage Backend (S3)**: Physical block data is stored in any S3-compatible object storage layer (AWS S3, Cloudflare R2, or MinIO) for horizontal scalability and persistent durability across container restarts.
-*   **Streaming Multipart Uploads**: Eliminates in-memory buffering. Literal block byte chunks are piped directly to object storage as a stream (`PassThrough` + `@aws-sdk/lib-storage`), drastically reducing memory footprint and preventing OOM crashes on gigabyte-sized files.
-*   **Database Transaction Scaling**: Uses array-based batch inserts via Drizzle ORM (chunked into 500 records) to eliminate N+1 query bottlenecks during large block transactions.
-*   **PostgreSQL Connection Pooling**: Configured `pg` connection pool with explicit limits to gracefully handle traffic spikes and prevent database exhaustion.
+*   **Rsync Algorithm Implementation**: Uses a two-level match (Adler-32 + SHA-256) to perform rolling hash block deduplication. Hashes are fully unit-tested via Vitest to guarantee zero false positives.
+*   **Infrastructure as Code (IaC)**: Includes a Terraform definition (`infrastructure/main.tf`) to reproducibly provision S3 buckets (with SSE-KMS encryption), ECS clusters, and RDS PostgreSQL databases.
+*   **Containerized Compute Layer**: Ready-to-deploy multistage `Dockerfile` specifically optimized for the Bun/Vite/TanStack environment.
+*   **Automated CI/CD Pipeline**: GitHub Actions workflow automatically spins up testing services (PostgreSQL/Redis), runs Vitest suites, builds the Docker image, and triggers blue/green deployments to AWS ECS.
+*   **Decoupled Asynchronous Workers**: Uses **BullMQ** running on a separate container (`server/worker.ts`) to handle heavy background processing, isolating compute-intensive tasks from the HTTP API.
+*   **Streaming Multipart Uploads**: Eliminates in-memory buffering. Literal block byte chunks are piped directly to S3 as a stream (`PassThrough` + `@aws-sdk/lib-storage`), preventing OOM crashes on massive files.
+*   **Database Transaction Scaling**: Array-based batch inserts via Drizzle ORM (chunked into 500 records) eliminate N+1 query bottlenecks. Uses optimistic locking to gracefully handle concurrent sync race conditions (PostgreSQL 23505 unique constraints).
+*   **Distributed Rate Limiting**: Centralized Redis-backed rate limiter (`ioredis`) restricts clients to 60 requests/minute consistently across a multi-node fleet.
+*   **Automated Garbage Collection & Maintenance**: Includes dedicated cron scripts (`server/gc.ts` & `server/cleanup.ts`) to continuously purge orphaned S3 blobs and prune stale `sync_jobs` logs older than 30 days.
 *   **Security Hardening**:
-    *   Fails fast on missing secrets (strict `JWT_SECRET` requirement, halting startup if missing).
-    *   In-memory rate limiting applied at the upload middleware layer (60 requests/min).
+    *   Strict `JWT_SECRET` requirement (halts startup if missing).
+    *   Zod-level logical path traversal prevention (`../`, `./`, `/`).
     *   Strict payload size caps (500MB limit).
-*   **Observability**: Fully structured JSON logging using `pino` to enable effective tracing and integration with Datadog/CloudWatch.
+*   **Observability & Health**: Fully structured JSON logging using `pino` and a dedicated `GET /api/health` probe endpoint for Load Balancer liveness checks.
 
 ## 🛠 Tech Stack
 
@@ -24,13 +28,16 @@ Deltasync is a high-performance delta-based file synchronization engine. It uses
 *   **Backend Runtime**: Node.js (Vite Dev Server)
 *   **Database**: PostgreSQL, Drizzle ORM
 *   **Storage**: S3-Compatible Object Storage (`@aws-sdk/client-s3`)
-*   **Logging**: Pino Structured Logging
+*   **Message Queue**: Redis & BullMQ
+*   **Testing**: Vitest
+*   **Infrastructure**: Docker, Terraform, GitHub Actions
 
 ## 📦 Prerequisites
 
-*   Node.js 22+ (or Bun)
+*   Node.js 22+
 *   PostgreSQL running locally or remotely
-*   An S3-compatible object storage bucket (e.g., AWS S3, Cloudflare R2, MinIO)
+*   Redis server (for Rate Limiting and BullMQ)
+*   An S3-compatible object storage bucket
 
 ## ⚙️ Installation & Setup
 
@@ -51,6 +58,9 @@ Deltasync is a high-performance delta-based file synchronization engine. It uses
     # Database Configuration
     DATABASE_URL=postgres://user:password@localhost:5432/deltasync
 
+    # Redis Configuration (BullMQ & Rate Limiting)
+    REDIS_URL=redis://localhost:6379
+
     # Security (Must be set, no default fallback)
     JWT_SECRET=your_super_secret_jwt_string
 
@@ -67,14 +77,18 @@ Deltasync is a high-performance delta-based file synchronization engine. It uses
     ```
 
 4.  **Run Database Migrations:**
-    Push the Drizzle schema to your PostgreSQL database.
     ```bash
     npx drizzle-kit push
     ```
 
-5.  **Start the Development Server:**
+5.  **Start the Development Services:**
+    You'll need multiple terminal tabs for full functionality:
     ```bash
+    # Tab 1: Main API Server
     npm run dev
+    
+    # Tab 2: BullMQ Background Worker
+    npx tsx server/worker.ts
     ```
     The application will be available at `http://localhost:5000/`.
 
