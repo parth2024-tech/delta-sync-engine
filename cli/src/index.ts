@@ -1,5 +1,7 @@
 #!/usr/bin/env node
-import { program } from "commander";
+import { Command } from "commander";
+
+const program = new Command();
 import { readFileSync, writeFileSync, statSync, existsSync } from "fs";
 import { createInterface } from "readline";
 import { readConfig, writeConfig } from "./config.js";
@@ -38,19 +40,19 @@ program.command("push <file>").description("Push a local file to the server").ac
 
   console.log(`Fetching remote signatures for ${filePath}…`);
   const remote    = await api.getSignatures(cfg, filePath);
-  const blockSize = remote?.blockSize ?? 4096;
+  const chunking  = remote?.chunking === "fixed" ? "fixed" : "cdc";
+  const blockSize = remote?.blockSize ?? (chunking === "cdc" ? 16384 : 4096);
 
   if (remote) {
-    console.log(`  remote: v${remote.versionNo}, ${remote.signatures.length} blocks`);
+    console.log(`  remote: v${remote.versionNo}, ${remote.signatures.length} chunks (${chunking})`);
   } else {
-    console.log("  remote: new file");
+    console.log("  remote: new file (CDC avg 16 KiB)");
   }
 
-  // Phase 2: computeDelta now returns { ops, literalBytes } — raw bytes, no base64
   const { ops, literalBytes } = await computeDelta(
     data,
     remote?.signatures ?? [],
-    blockSize,
+    { chunking, blockSize },
   );
 
   const literals = ops.filter((o) => o.type === "literal").length;
@@ -60,7 +62,7 @@ program.command("push <file>").description("Push a local file to the server").ac
 
   const result = await api.upload(
     cfg,
-    { path: filePath, blockSize, newSize: data.length, contentSha256: hash, ops },
+    { path: filePath, chunking, blockSize, newSize: data.length, contentSha256: hash, ops },
     literalBytes,
   );
 
@@ -106,4 +108,4 @@ function fmtBytes(b: number) {
   return `${b} B`;
 }
 
-program.parse();
+program.parse(process.argv);

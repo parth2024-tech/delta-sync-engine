@@ -26,7 +26,7 @@ export async function getSignatures(cfg: Config, path: string) {
   });
   if (!r.ok) throw new Error(await r.text());
   return r.json() as Promise<{
-    fileId: string; versionNo: number; blockSize: number;
+    fileId: string; versionNo: number; blockSize: number; chunking?: "cdc" | "fixed";
     signatures: { blockIndex: number; weakHash: number; strongHash: string; offset: number; length: number }[];
   } | null>;
 }
@@ -40,7 +40,7 @@ export async function getSignatures(cfg: Config, path: string) {
  */
 export async function upload(
   cfg: Config,
-  meta: { path: string; blockSize: number; newSize: number; contentSha256: string; ops: Op[] },
+  meta: { path: string; chunking: "cdc" | "fixed"; blockSize: number; newSize: number; contentSha256: string; ops: Op[] },
   literalBytes: Buffer,
 ): Promise<{ versionNo: number; bytesSaved: number }> {
   const form = new FormData();
@@ -48,7 +48,7 @@ export async function upload(
   if (literalBytes.length > 0) {
     form.append(
       "literals",
-      new Blob([literalBytes], { type: "application/octet-stream" }),
+      new Blob([new Uint8Array(literalBytes)], { type: "application/octet-stream" }),
       "literals.bin",
     );
   }

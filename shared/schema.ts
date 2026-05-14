@@ -1,7 +1,23 @@
 import {
-  pgTable, text, integer, bigint, timestamp, uniqueIndex, index,
+  pgTable, text, integer, bigint, timestamp, uniqueIndex, index, customType,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
+
+/** Raw PostgreSQL bytea for packed chunk manifests (one blob per version). */
+export const bytea = customType<{ data: Buffer | null; driverData: Buffer | null }>({
+  dataType() {
+    return "bytea";
+  },
+  toDriver(value: Buffer | null): Buffer | null {
+    return value;
+  },
+  fromDriver(value: unknown): Buffer | null {
+    if (value == null) return null;
+    if (Buffer.isBuffer(value)) return value;
+    if (value instanceof Uint8Array) return Buffer.from(value);
+    return Buffer.from(String(value), "binary");
+  },
+});
 
 export const users = pgTable("users", {
   id:           text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
@@ -30,6 +46,10 @@ export const fileVersions = pgTable("file_versions", {
   size:          bigint("size", { mode: "number" }).notNull().default(0),
   totalBlocks:   integer("total_blocks").notNull().default(0),
   blockSize:     integer("block_size").notNull().default(4096),
+  /** Packed chunk list (offset, length, weak, strong×32). Replaces per-row `blocks` for new versions. */
+  chunkManifest: bytea("chunk_manifest"),
+  /** `cdc` = content-defined chunks; `fixed` = legacy fixed-size blocks. */
+  chunkingMode:  text("chunking_mode").notNull().default("fixed").$type<"cdc" | "fixed">(),
   contentSha256: text("content_sha256").notNull().default(""),
   createdAt:     timestamp("created_at").defaultNow().notNull(),
 }, (t) => [

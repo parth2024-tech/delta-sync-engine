@@ -1,0 +1,15 @@
+[package]
+name = "deltasync-native"
+version = "0.1.0"
+edition = "2021"
+description = "Native-speed file hashing and CDC chunking for deltasync (companion to the Node CLI)"
+
+[[bin]]
+name = "deltasync-native"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+memmap2 = "0.9"
+sha2 = "0.10"
+hex = "0.4"

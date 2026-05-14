@@ -1,14 +1,5 @@
 /**
- * Phase 4 — Chunked rsync delta computation.
- *
- * computeDelta   — original eager API (small files, browser playground).
- * computeDeltaChunked — async generator yielding ops in chunks; O(1) memory for huge files.
- *
- * Algorithm: slide a rolling Adler-32 window of size `blockSize` across newBytes.
- *   1. Cheap check: does the lower 16 bits of the weak hash match any old-block bucket?
- *   2. Expensive check: SHA-256 strong match.
- * On match → emit COPY op, jump window forward by blockSize.
- * No match → buffer byte into a literal run, slide by one.
+ * Delta computation: fixed-size rolling window (legacy) or CDC on the new file.
  */
 
 import {
@@ -19,7 +10,8 @@ import {
   type Adler32State,
 } from "./adler32";
 import { sha256 } from "./strong-hash";
-import type { BlockSignature } from "./signatures";
+import type { BlockSignature, ChunkingMode } from "./signatures";
+import { cdcRanges } from "../../../shared/fastcdc";
 
 export type DeltaOp =
   | { type: "copy";    blockIndex: number; offset: number; length: number }
@@ -37,11 +29,10 @@ export interface DeltaResult {
   ops:       DeltaOp[];
   stats:     DeltaStats;
   blockSize: number;
+  mode:      ChunkingMode;
 }
 
-// ─── helpers ────────────────────────────────────────────────────────────────
-
-function buildBuckets(sigs: BlockSignature[], blockSize: number): Map<number, BlockSignature[]> {
+function buildBucketsFixed(sigs: BlockSignature[], blockSize: number): Map<number, BlockSignature[]> {
   const buckets = new Map<number, BlockSignature[]>();
   for (const sig of sigs) {
     if (sig.length !== blockSize) continue;
@@ -53,17 +44,26 @@ function buildBuckets(sigs: BlockSignature[], blockSize: number): Map<number, Bl
   return buckets;
 }
 
-// ─── eager API (in-memory, unchanged interface) ──────────────────────────────
+function buildBucketsAll(sigs: BlockSignature[]): Map<number, BlockSignature[]> {
+  const buckets = new Map<number, BlockSignature[]>();
+  for (const sig of sigs) {
+    const key  = weak16(sig.weak);
+    const list = buckets.get(key);
+    if (list) list.push(sig);
+    else buckets.set(key, [sig]);
+  }
+  return buckets;
+}
 
 export async function computeDelta(
   newBytes: Uint8Array,
   oldSignatures: BlockSignature[],
   blockSize: number,
+  mode: ChunkingMode = "cdc",
 ): Promise<DeltaResult> {
-  const ops: DeltaOp[] = [];
   const results: DeltaOp[] = [];
 
-  for await (const op of computeDeltaChunked(newBytes, oldSignatures, blockSize)) {
+  for await (const op of computeDeltaChunked(newBytes, oldSignatures, blockSize, mode)) {
     results.push(op);
   }
 
@@ -75,6 +75,7 @@ export async function computeDelta(
     newLiteralRuns: 0,
   };
 
+  const ops: DeltaOp[] = [];
   for (const op of results) {
     if (op.type === "copy") {
       stats.copiedBytes  += op.length;
@@ -86,24 +87,21 @@ export async function computeDelta(
     ops.push(op);
   }
 
-  return { ops, stats, blockSize };
+  return { ops, stats, blockSize, mode };
 }
 
-// ─── Phase 4: chunked generator (O(1) memory per chunk) ─────────────────────
-
-/**
- * Yields DeltaOps one at a time without buffering the full list.
- * Safe for files that exceed available RAM when used with a streaming upload.
- *
- * Usage:
- *   for await (const op of computeDeltaChunked(bytes, sigs, blockSize)) { ... }
- */
 export async function* computeDeltaChunked(
   newBytes: Uint8Array,
   oldSignatures: BlockSignature[],
   blockSize: number,
+  mode: ChunkingMode = "cdc",
 ): AsyncGenerator<DeltaOp> {
-  const buckets = buildBuckets(oldSignatures, blockSize);
+  if (mode === "cdc") {
+    yield* computeDeltaCdcChunked(newBytes, oldSignatures, blockSize);
+    return;
+  }
+
+  const buckets = buildBucketsFixed(oldSignatures, blockSize);
 
   if (newBytes.length < blockSize) {
     if (newBytes.length > 0) {
@@ -155,4 +153,40 @@ export async function* computeDeltaChunked(
   }
 
   yield* yieldLiteral(newBytes.length);
+}
+
+async function* computeDeltaCdcChunked(
+  newBytes: Uint8Array,
+  oldSignatures: BlockSignature[],
+  blockSize: number,
+): AsyncGenerator<DeltaOp> {
+  if (!oldSignatures.length) {
+    if (newBytes.length > 0) {
+      yield { type: "literal", offset: 0, bytes: newBytes.slice() };
+    }
+    return;
+  }
+
+  const buckets = buildBucketsAll(oldSignatures);
+  const ranges = cdcRanges(newBytes, {
+    minSize: Math.max(256, Math.floor(blockSize / 4)),
+    avgSize: blockSize,
+    maxSize: Math.min(256 * 1024, blockSize * 32),
+  });
+
+  for (const { start, end } of ranges) {
+    const slice = newBytes.subarray(start, end);
+    const weak = adler32Hash(adler32(slice));
+    const strong = await sha256(slice);
+    const candidates = buckets.get(weak16(weak));
+    const matched = candidates?.find(
+      (c) => c.weak === weak && c.strong === strong && c.length === slice.length,
+    );
+
+    if (matched) {
+      yield { type: "copy", blockIndex: matched.index, offset: start, length: slice.length };
+    } else {
+      yield { type: "literal", offset: start, bytes: slice.slice() };
+    }
+  }
 }

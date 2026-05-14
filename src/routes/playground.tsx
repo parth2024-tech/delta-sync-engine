@@ -72,8 +72,8 @@ function Playground() {
     setRunning(true);
     setVerified(null);
     try {
-      const s = await computeSignatures(oldBytes, blockSize);
-      const r = await computeDelta(newBytes, s, blockSize);
+      const s = await computeSignatures(oldBytes, blockSize, "cdc");
+      const r = await computeDelta(newBytes, s, blockSize, "cdc");
       // Sanity: reconstruct and compare.
       const reconstructed = applyDelta(oldBytes, s, r.ops, newBytes.length);
       const ok =

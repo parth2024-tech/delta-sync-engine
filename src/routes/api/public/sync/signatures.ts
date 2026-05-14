@@ -1,16 +1,14 @@
 /**
- * Signatures endpoint — returns block signatures for the current version of a file.
- *
- * Phase 1: offset and length are no longer stored in the DB; they are derived:
- *   offset = blockIndex * blockSize
- *   length = min(blockSize, version.size - offset)
+ * Returns chunk signatures for the current file version.
+ * Prefers packed `chunk_manifest`; falls back to legacy `blocks` rows.
  */
 
 import { createFileRoute } from "@tanstack/react-router";
 import type {} from "@tanstack/react-start";
 import { validateApiKey } from "@/lib/api-key-auth";
 import { db } from "../../../../../server/db";
-import { files, fileVersions, blocks } from "../../../../../shared/schema";
+import { files, fileVersions } from "../../../../../shared/schema";
+import { loadVersionChunks } from "../../../../../server/version-chunks";
 import { and, eq } from "drizzle-orm";
 
 export const Route = createFileRoute("/api/public/sync/signatures")({
@@ -34,32 +32,21 @@ export const Route = createFileRoute("/api/public/sync/signatures")({
           .where(eq(fileVersions.id, file.currentVersionId));
         if (!version) return json(null);
 
-        const sigs = await db
-          .select({ blockIndex: blocks.blockIndex, weakHash: blocks.weakHash, strongHash: blocks.strongHash })
-          .from(blocks)
-          .where(eq(blocks.versionId, version.id))
-          .orderBy(blocks.blockIndex);
+        const chunks = await loadVersionChunks(db, version.id, version);
 
-        const bs       = version.blockSize;
-        const fileSize = Number(version.size);
-
-        // Derive offset + length from block metadata (Phase 1 — not stored in DB)
-        const signatures = sigs.map((s) => {
-          const offset = s.blockIndex * bs;
-          const length = Math.min(bs, fileSize - offset);
-          return {
-            blockIndex: s.blockIndex,
-            weakHash:   Number(s.weakHash),
-            strongHash: s.strongHash,
-            offset,
-            length,
-          };
-        });
+        const signatures = chunks.map((s) => ({
+          blockIndex: s.blockIndex,
+          weakHash:   Number(s.weakHash),
+          strongHash: s.strongHashHex,
+          offset:     s.offset,
+          length:     s.length,
+        }));
 
         return json({
           fileId:     file.id,
           versionNo:  version.versionNo,
-          blockSize:  bs,
+          blockSize:  version.blockSize,
+          chunking:   version.chunkingMode,
           signatures,
         });
       },

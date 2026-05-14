@@ -1,15 +1,10 @@
 /**
- * Phase 2 + Phase 4 — CLI rsync delta engine.
- *
- * Op type updated: literals carry { literalOffset, literalLength } into a
- * raw Buffer instead of base64 strings, eliminating the 33% base64 overhead.
- *
- * computeDelta returns { ops, literalBytes } — the ops JSON goes in the 'meta'
- * multipart field; literalBytes goes as a raw binary 'literals' field.
+ * Delta engine: fixed-size rolling (legacy) or content-defined chunking (CDC).
+ * Weak hash: Adler-32 (matches server + historical clients).
  */
 
-const BLOCK = 4096;
-const MOD   = 65521;
+import { cdcRanges } from "../../shared/fastcdc.js";
+import { adler32, sha256Hex } from "../../shared/hash.js";
 
 export interface Signature {
   blockIndex: number;
@@ -28,52 +23,62 @@ export interface DeltaResult {
   literalBytes: Buffer;
 }
 
-// ─── helpers ─────────────────────────────────────────────────────────────────
+function weak16(w: number): number {
+  return w & 0xffff;
+}
 
-function adler32(data: Buffer, start: number, end: number): number {
-  let a = 1, b = 0;
-  for (let i = start; i < end; i++) {
-    a = (a + data[i]) % MOD;
-    b = (b + a) % MOD;
+export interface BuildSigOpts {
+  chunking: "cdc" | "fixed";
+  blockSize: number;
+}
+
+export async function buildSignatures(data: Buffer, opts: BuildSigOpts): Promise<Signature[]> {
+  if (opts.chunking === "fixed") {
+    const blockSize = opts.blockSize;
+    const sigs: Signature[] = [];
+    let offset = 0, idx = 0;
+    while (offset < data.length) {
+      const end = Math.min(offset + blockSize, data.length);
+      const chunk = data.subarray(offset, end);
+      sigs.push({
+        blockIndex: idx++,
+        weakHash:   adler32(chunk),
+        strongHash: await sha256Hex(chunk),
+        offset,
+        length: end - offset,
+      });
+      offset = end;
+    }
+    return sigs;
   }
-  return ((b << 16) | a) >>> 0;
-}
 
-async function sha256Hex(data: Buffer): Promise<string> {
-  const { createHash } = await import("crypto");
-  return createHash("sha256").update(data).digest("hex");
-}
+  const avg = opts.blockSize;
+  const ranges = cdcRanges(data, {
+    minSize: Math.max(512, Math.floor(avg / 4)),
+    avgSize: avg,
+    maxSize: Math.min(4 * 1024 * 1024, avg * 64),
+  });
 
-// ─── public API ──────────────────────────────────────────────────────────────
-
-export async function buildSignatures(data: Buffer, blockSize = BLOCK): Promise<Signature[]> {
   const sigs: Signature[] = [];
-  let offset = 0, idx = 0;
-  while (offset < data.length) {
-    const end   = Math.min(offset + blockSize, data.length);
-    const chunk = data.subarray(offset, end);
+  let idx = 0;
+  for (const { start, end } of ranges) {
+    const chunk = data.subarray(start, end);
     sigs.push({
       blockIndex: idx++,
-      weakHash:   adler32(data, offset, end),
+      weakHash:   adler32(chunk),
       strongHash: await sha256Hex(chunk),
-      offset,
-      length: end - offset,
+      offset:     start,
+      length:     end - start,
     });
-    offset = end;
   }
   return sigs;
 }
 
-/**
- * Phase 4: O(1) memory delta — no base64, no full-file buffering.
- * Returns raw ops + a consolidated literal Buffer.
- */
 export async function computeDelta(
-  newData:    Buffer,
+  newData: Buffer,
   remoteSigs: Signature[],
-  blockSize = BLOCK,
+  opts: BuildSigOpts,
 ): Promise<DeltaResult> {
-  // New file — entire contents are one literal run
   if (!remoteSigs.length) {
     return {
       ops:          [{ type: "literal", literalOffset: 0, literalLength: newData.length }],
@@ -81,18 +86,29 @@ export async function computeDelta(
     };
   }
 
+  if (opts.chunking === "fixed") {
+    return computeDeltaFixed(newData, remoteSigs, opts.blockSize);
+  }
+  return computeDeltaCdc(newData, remoteSigs, opts);
+}
+
+async function computeDeltaFixed(
+  newData: Buffer,
+  remoteSigs: Signature[],
+  blockSize: number,
+): Promise<DeltaResult> {
   const weakMap = new Map<number, Signature[]>();
   for (const s of remoteSigs) {
-    const bucket = weakMap.get(s.weakHash);
+    const bucket = weakMap.get(weak16(s.weakHash));
     if (bucket) bucket.push(s);
-    else weakMap.set(s.weakHash, [s]);
+    else weakMap.set(weak16(s.weakHash), [s]);
   }
 
-  const ops:          Op[]     = [];
+  const ops: Op[] = [];
   const literalParts: Buffer[] = [];
-  let   literalCursor          = 0;
+  let literalCursor = 0;
 
-  let i        = 0;
+  let i = 0;
   let litStart = 0;
 
   const flushLiteral = (until: number) => {
@@ -105,17 +121,17 @@ export async function computeDelta(
   };
 
   while (i <= newData.length - blockSize) {
-    const weak       = adler32(newData, i, i + blockSize);
-    const candidates = weakMap.get(weak);
+    const weak = adler32(newData.subarray(i, i + blockSize));
+    const candidates = weakMap.get(weak16(weak));
 
     if (candidates) {
       const strong = await sha256Hex(newData.subarray(i, i + blockSize));
-      const match  = candidates.find((c) => c.strongHash === strong);
+      const match = candidates.find((c) => c.weakHash === weak && c.strongHash === strong);
       if (match) {
         flushLiteral(i);
         ops.push({ type: "copy", blockIndex: match.blockIndex });
-        i        += blockSize;
-        litStart  = i;
+        i += blockSize;
+        litStart = i;
         continue;
       }
     }
@@ -123,6 +139,50 @@ export async function computeDelta(
   }
 
   flushLiteral(newData.length);
+
+  return { ops, literalBytes: Buffer.concat(literalParts) };
+}
+
+async function computeDeltaCdc(
+  newData: Buffer,
+  remoteSigs: Signature[],
+  opts: BuildSigOpts,
+): Promise<DeltaResult> {
+  const weakMap = new Map<number, Signature[]>();
+  for (const s of remoteSigs) {
+    const bucket = weakMap.get(weak16(s.weakHash));
+    if (bucket) bucket.push(s);
+    else weakMap.set(weak16(s.weakHash), [s]);
+  }
+
+  const avg = opts.blockSize;
+  const ranges = cdcRanges(newData, {
+    minSize: Math.max(512, Math.floor(avg / 4)),
+    avgSize: avg,
+    maxSize: Math.min(4 * 1024 * 1024, avg * 64),
+  });
+
+  const ops: Op[] = [];
+  const literalParts: Buffer[] = [];
+  let literalCursor = 0;
+
+  for (const { start, end } of ranges) {
+    const slice = newData.subarray(start, end);
+    const weak = adler32(slice);
+    const strong = await sha256Hex(slice);
+    const candidates = weakMap.get(weak16(weak));
+    const match = candidates?.find(
+      (c) => c.weakHash === weak && c.strongHash === strong && c.length === slice.length,
+    );
+
+    if (match) {
+      ops.push({ type: "copy", blockIndex: match.blockIndex });
+    } else {
+      ops.push({ type: "literal", literalOffset: literalCursor, literalLength: slice.length });
+      literalParts.push(Buffer.from(slice));
+      literalCursor += slice.length;
+    }
+  }
 
   return { ops, literalBytes: Buffer.concat(literalParts) };
 }

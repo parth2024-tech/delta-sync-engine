@@ -144,23 +144,23 @@ computing delta ................. 41 changed
 
 const STEPS = [
   {
-    title: "Block & sign",
+    title: "Chunk & sign",
     body:
-      "Server splits the existing file into fixed-size blocks. For each block it computes a weak Adler-32 hash and a strong SHA-256 hash.",
+      "The server stores a packed chunk manifest per version (content-defined or fixed-size). Each chunk has a weak Adler-32 hash and a strong SHA-256 hash; object bytes live in the block-store.",
   },
   {
-    title: "Roll the window",
+    title: "Match on the client",
     body:
-      "Client slides a window of blockSize bytes across the new file. Adler-32 updates in O(1) when one byte enters and another leaves.",
+      "The CLI cuts the new file with CDC (or a rolling fixed window for legacy files), buckets weak hashes, and confirms matches with SHA-256 before emitting COPY vs LITERAL ops.",
   },
   {
     title: "Two-level match",
     body:
-      "On a 16-bit weak hit, verify with SHA-256. A confirmed match emits a COPY op; otherwise the leftmost byte joins a literal run.",
+      "On a 16-bit weak hit, verify with SHA-256. A confirmed match emits a COPY op; otherwise the region becomes a literal run.",
   },
   {
     title: "Stream the delta",
     body:
-      "Only literal runs travel over the wire. The server replays COPY + LITERAL ops against its existing blocks to reconstruct the new file.",
+      "Only literal runs travel over the wire. The server replays COPY + LITERAL ops against its block-store to reconstruct the new file.",
   },
 ];
