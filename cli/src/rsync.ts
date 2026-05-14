@@ -1,4 +1,13 @@
-// Minimal rsync delta engine for the CLI (no native deps)
+/**
+ * Phase 2 + Phase 4 — CLI rsync delta engine.
+ *
+ * Op type updated: literals carry { literalOffset, literalLength } into a
+ * raw Buffer instead of base64 strings, eliminating the 33% base64 overhead.
+ *
+ * computeDelta returns { ops, literalBytes } — the ops JSON goes in the 'meta'
+ * multipart field; literalBytes goes as a raw binary 'literals' field.
+ */
+
 const BLOCK = 4096;
 const MOD   = 65521;
 
@@ -12,18 +21,30 @@ export interface Signature {
 
 export type Op =
   | { type: "copy";    blockIndex: number }
-  | { type: "literal"; bytesB64: string   };
+  | { type: "literal"; literalOffset: number; literalLength: number };
+
+export interface DeltaResult {
+  ops:          Op[];
+  literalBytes: Buffer;
+}
+
+// ─── helpers ─────────────────────────────────────────────────────────────────
 
 function adler32(data: Buffer, start: number, end: number): number {
   let a = 1, b = 0;
-  for (let i = start; i < end; i++) { a = (a + data[i]) % MOD; b = (b + a) % MOD; }
-  return (b << 16) | a;
+  for (let i = start; i < end; i++) {
+    a = (a + data[i]) % MOD;
+    b = (b + a) % MOD;
+  }
+  return ((b << 16) | a) >>> 0;
 }
 
-async function sha256Hex(data: Buffer | string): Promise<string> {
+async function sha256Hex(data: Buffer): Promise<string> {
   const { createHash } = await import("crypto");
-  return createHash("sha256").update(typeof data === "string" ? Buffer.from(data, "base64") : data).digest("hex");
+  return createHash("sha256").update(data).digest("hex");
 }
+
+// ─── public API ──────────────────────────────────────────────────────────────
 
 export async function buildSignatures(data: Buffer, blockSize = BLOCK): Promise<Signature[]> {
   const sigs: Signature[] = [];
@@ -36,53 +57,74 @@ export async function buildSignatures(data: Buffer, blockSize = BLOCK): Promise<
       weakHash:   adler32(data, offset, end),
       strongHash: await sha256Hex(chunk),
       offset,
-      length:     end - offset,
+      length: end - offset,
     });
     offset = end;
   }
   return sigs;
 }
 
-export async function computeDelta(newData: Buffer, remoteSigs: Signature[], blockSize = BLOCK): Promise<Op[]> {
+/**
+ * Phase 4: O(1) memory delta — no base64, no full-file buffering.
+ * Returns raw ops + a consolidated literal Buffer.
+ */
+export async function computeDelta(
+  newData:    Buffer,
+  remoteSigs: Signature[],
+  blockSize = BLOCK,
+): Promise<DeltaResult> {
+  // New file — entire contents are one literal run
   if (!remoteSigs.length) {
-    const b64 = newData.toString("base64");
-    return [{ type: "literal", bytesB64: b64 }];
+    return {
+      ops:          [{ type: "literal", literalOffset: 0, literalLength: newData.length }],
+      literalBytes: newData,
+    };
   }
 
-  const weakMap  = new Map<number, Signature[]>();
+  const weakMap = new Map<number, Signature[]>();
   for (const s of remoteSigs) {
-    if (!weakMap.has(s.weakHash)) weakMap.set(s.weakHash, []);
-    weakMap.get(s.weakHash)!.push(s);
+    const bucket = weakMap.get(s.weakHash);
+    if (bucket) bucket.push(s);
+    else weakMap.set(s.weakHash, [s]);
   }
 
-  const ops: Op[] = [];
-  let i = 0;
+  const ops:          Op[]     = [];
+  const literalParts: Buffer[] = [];
+  let   literalCursor          = 0;
+
+  let i        = 0;
   let litStart = 0;
 
+  const flushLiteral = (until: number) => {
+    if (until > litStart) {
+      const chunk = newData.subarray(litStart, until);
+      ops.push({ type: "literal", literalOffset: literalCursor, literalLength: chunk.length });
+      literalParts.push(Buffer.from(chunk));
+      literalCursor += chunk.length;
+    }
+  };
+
   while (i <= newData.length - blockSize) {
-    const weak = adler32(newData, i, i + blockSize);
+    const weak       = adler32(newData, i, i + blockSize);
     const candidates = weakMap.get(weak);
+
     if (candidates) {
       const strong = await sha256Hex(newData.subarray(i, i + blockSize));
       const match  = candidates.find((c) => c.strongHash === strong);
       if (match) {
-        if (litStart < i) {
-          ops.push({ type: "literal", bytesB64: newData.subarray(litStart, i).toString("base64") });
-        }
+        flushLiteral(i);
         ops.push({ type: "copy", blockIndex: match.blockIndex });
-        i       += blockSize;
-        litStart = i;
+        i        += blockSize;
+        litStart  = i;
         continue;
       }
     }
     i++;
   }
 
-  if (litStart < newData.length) {
-    ops.push({ type: "literal", bytesB64: newData.subarray(litStart).toString("base64") });
-  }
+  flushLiteral(newData.length);
 
-  return ops;
+  return { ops, literalBytes: Buffer.concat(literalParts) };
 }
 
 export async function contentHash(data: Buffer): Promise<string> {

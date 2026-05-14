@@ -5,6 +5,7 @@ import { db } from "../../server/db";
 import { files, fileVersions, syncJobs, blocks } from "../../shared/schema";
 import { eq, desc, sql, and, gte, count } from "drizzle-orm";
 import { verifySessionToken } from "../../server/auth";
+import { fetchBlock } from "../../server/block-store";
 
 async function requireAuth() {
   const token = getCookie("ds_session");
@@ -18,7 +19,7 @@ export const getDashboardStats = createServerFn({ method: "GET" }).handler(async
   const userId = await requireAuth();
 
   const [totals] = await db.select({
-    totalFiles:           count(files.id),
+    totalFiles:            count(files.id),
     totalBytesTransferred: sql<number>`coalesce(sum(${syncJobs.bytesTransferred}), 0)`,
     totalBytesSaved:       sql<number>`coalesce(sum(${syncJobs.bytesSaved}), 0)`,
   }).from(files)
@@ -79,10 +80,20 @@ export const getFileDetail = createServerFn({ method: "GET" })
       .where(eq(fileVersions.fileId, file.id)).orderBy(desc(fileVersions.versionNo));
 
     const versionBlocks = await Promise.all(versions.map(async (v) => {
+      const bs       = v.blockSize;
+      const fileSize = Number(v.size);
       const blks = await db.select({
-        blockIndex: blocks.blockIndex, weakHash: blocks.weakHash, strongHash: blocks.strongHash, length: blocks.length,
+        blockIndex: blocks.blockIndex, weakHash: blocks.weakHash, strongHash: blocks.strongHash,
       }).from(blocks).where(eq(blocks.versionId, v.id)).orderBy(blocks.blockIndex);
-      return { version: v, blocks: blks };
+
+      // Derive offset + length from blockIndex (Phase 1)
+      const blocksWithMeta = blks.map((b) => ({
+        ...b,
+        offset: b.blockIndex * bs,
+        length: Math.min(bs, fileSize - b.blockIndex * bs),
+      }));
+
+      return { version: v, blocks: blocksWithMeta };
     }));
 
     return { file, versionBlocks };
@@ -112,10 +123,24 @@ export const downloadVersion = createServerFn({ method: "POST" })
       .where(and(eq(files.id, data.fileId), eq(files.userId, userId)));
     if (!file) throw new Error("Not found");
 
-    const blks = await db.select({ data: blocks.data, blockIndex: blocks.blockIndex })
-      .from(blocks).where(eq(blocks.versionId, data.versionId))
+    const [version] = await db.select().from(fileVersions)
+      .where(eq(fileVersions.id, data.versionId));
+    if (!version) throw new Error("Version not found");
+
+    const blks = await db
+      .select({ strongHash: blocks.strongHash, blockIndex: blocks.blockIndex })
+      .from(blocks)
+      .where(eq(blocks.versionId, data.versionId))
       .orderBy(blocks.blockIndex);
 
-    const combined = blks.map((b) => b.data).join("");
-    return { data: combined, filename: file.path.split("/").pop() ?? "download" };
+    // Phase 3: reconstruct from block-store (no more base64 in DB)
+    const parts = await Promise.all(blks.map((b) => fetchBlock(b.strongHash)));
+    const total = parts.reduce((sum, p) => sum + p.length, 0);
+    const out   = new Uint8Array(total);
+    let offset  = 0;
+    for (const part of parts) { out.set(part, offset); offset += part.length; }
+
+    const b64      = btoa(String.fromCharCode(...out));
+    const filename = file.path.split("/").pop() ?? "download";
+    return { data: b64, filename };
   });

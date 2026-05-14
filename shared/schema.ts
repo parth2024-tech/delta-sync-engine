@@ -24,25 +24,27 @@ export const files = pgTable("files", {
 ]);
 
 export const fileVersions = pgTable("file_versions", {
-  id:           text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
-  fileId:       text("file_id").notNull().references(() => files.id, { onDelete: "cascade" }),
-  versionNo:    integer("version_no").notNull(),
-  size:         bigint("size", { mode: "number" }).notNull().default(0),
-  totalBlocks:  integer("total_blocks").notNull().default(0),
-  blockSize:    integer("block_size").notNull().default(4096),
-  contentSha256:text("content_sha256").notNull().default(""),
-  createdAt:    timestamp("created_at").defaultNow().notNull(),
-});
+  id:            text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  fileId:        text("file_id").notNull().references(() => files.id, { onDelete: "cascade" }),
+  versionNo:     integer("version_no").notNull(),
+  size:          bigint("size", { mode: "number" }).notNull().default(0),
+  totalBlocks:   integer("total_blocks").notNull().default(0),
+  blockSize:     integer("block_size").notNull().default(4096),
+  contentSha256: text("content_sha256").notNull().default(""),
+  createdAt:     timestamp("created_at").defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex("file_versions_file_verno_unique").on(t.fileId, t.versionNo),
+]);
 
+// Phase 1: data column removed — binary content lives in the block-store (local FS / S3-compatible)
+// keyed by strongHash (SHA-256).  offset and length are derivable:
+//   offset = blockIndex * blockSize   length = min(blockSize, version.size - offset)
 export const blocks = pgTable("blocks", {
   id:         text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
   versionId:  text("version_id").notNull().references(() => fileVersions.id, { onDelete: "cascade" }),
   blockIndex: integer("block_index").notNull(),
-  offset:     bigint("offset", { mode: "number" }).notNull(),
-  length:     integer("length").notNull(),
   weakHash:   bigint("weak_hash", { mode: "number" }).notNull(),
   strongHash: text("strong_hash").notNull(),
-  data:       text("data").notNull().default(""),
 }, (t) => [
   index("blocks_version_index_idx").on(t.versionId, t.blockIndex),
   index("blocks_weak_hash_idx").on(t.weakHash),

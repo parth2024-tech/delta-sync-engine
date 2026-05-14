@@ -2,16 +2,16 @@
 import { program } from "commander";
 import { readFileSync, writeFileSync, statSync, existsSync } from "fs";
 import { createInterface } from "readline";
-import { readConfig, writeConfig, configExists } from "./config.js";
+import { readConfig, writeConfig } from "./config.js";
 import { getFile, upsertFile } from "./db.js";
-import { buildSignatures, computeDelta, contentHash } from "./rsync.js";
+import { computeDelta, contentHash } from "./rsync.js";
 import * as api from "./api.js";
 
 program.name("deltasync").description("Delta-based file sync CLI").version("0.1.0");
 
 // ─── init ──────────────────────────────────────────────────────────────────────
 program.command("init").description("Initialise Deltasync in the current directory").action(async () => {
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const rl  = createInterface({ input: process.stdin, output: process.stdout });
   const ask = (q: string) => new Promise<string>((res) => rl.question(q, res));
 
   console.log("Deltasync init\n");
@@ -26,53 +26,63 @@ program.command("init").description("Initialise Deltasync in the current directo
 
 // ─── push ──────────────────────────────────────────────────────────────────────
 program.command("push <file>").description("Push a local file to the server").action(async (filePath: string) => {
-  const cfg = readConfig();
+  const cfg    = readConfig();
   if (!existsSync(filePath)) { console.error(`File not found: ${filePath}`); process.exit(1); }
 
-  const stat    = statSync(filePath);
-  const data    = readFileSync(filePath);
-  const hash    = await contentHash(data);
-  const cached  = getFile(filePath);
+  const stat   = statSync(filePath);
+  const data   = readFileSync(filePath);
+  const hash   = await contentHash(data);
+  const cached = getFile(filePath);
 
   if (cached?.last_hash === hash) { console.log(`✓ ${filePath} — unchanged, skipping`); return; }
 
   console.log(`Fetching remote signatures for ${filePath}…`);
-  const remote = await api.getSignatures(cfg, filePath);
-
-  let ops;
+  const remote    = await api.getSignatures(cfg, filePath);
   const blockSize = remote?.blockSize ?? 4096;
+
   if (remote) {
     console.log(`  remote: v${remote.versionNo}, ${remote.signatures.length} blocks`);
-    ops = await computeDelta(data, remote.signatures, blockSize);
   } else {
     console.log("  remote: new file");
-    ops = await computeDelta(data, [], blockSize);
   }
 
-  const literals   = ops.filter((o) => o.type === "literal").length;
-  const copies     = ops.filter((o) => o.type === "copy").length;
-  console.log(`  delta: ${literals} literal, ${copies} copy ops`);
+  // Phase 2: computeDelta now returns { ops, literalBytes } — raw bytes, no base64
+  const { ops, literalBytes } = await computeDelta(
+    data,
+    remote?.signatures ?? [],
+    blockSize,
+  );
 
-  const result = await api.upload(cfg, {
-    path: filePath, blockSize, newSize: data.length, contentSha256: hash, ops,
-  });
+  const literals = ops.filter((o) => o.type === "literal").length;
+  const copies   = ops.filter((o) => o.type === "copy").length;
+  console.log(`  delta: ${literals} literal run(s), ${copies} copy op(s)`);
+  console.log(`  literal payload: ${fmtBytes(literalBytes.length)} raw (was base64 before)`);
 
-  upsertFile(filePath, stat.mtimeMs, stat.size, hash, (remote?.versionNo ?? 0) + 1);
+  const result = await api.upload(
+    cfg,
+    { path: filePath, blockSize, newSize: data.length, contentSha256: hash, ops },
+    literalBytes,
+  );
+
+  upsertFile(filePath, stat.mtimeMs, stat.size, hash, result.versionNo);
   const savedPct = data.length > 0 ? Math.round((result.bytesSaved / data.length) * 100) : 0;
-  console.log(`✓ pushed — saved ${fmtBytes(result.bytesSaved)} (${savedPct}%)`);
+  console.log(`✓ pushed v${result.versionNo} — saved ${fmtBytes(result.bytesSaved)} (${savedPct}%)`);
 });
 
 // ─── pull ──────────────────────────────────────────────────────────────────────
-program.command("pull <file>").option("--version <n>", "specific version number").description("Pull a file from the server").action(async (filePath: string, opts: { version?: string }) => {
-  const cfg  = readConfig();
-  const ver  = opts.version ? parseInt(opts.version) : undefined;
-  console.log(`Pulling ${filePath}${ver != null ? ` v${ver}` : ""}…`);
-  const data = await api.download(cfg, filePath, ver);
-  writeFileSync(filePath, data);
-  const hash = await contentHash(data);
-  upsertFile(filePath, Date.now(), data.length, hash, ver ?? 0);
-  console.log(`✓ ${filePath} (${fmtBytes(data.length)})`);
-});
+program.command("pull <file>")
+  .option("--version <n>", "specific version number")
+  .description("Pull a file from the server")
+  .action(async (filePath: string, opts: { version?: string }) => {
+    const cfg = readConfig();
+    const ver = opts.version ? parseInt(opts.version) : undefined;
+    console.log(`Pulling ${filePath}${ver != null ? ` v${ver}` : ""}…`);
+    const buf = await api.download(cfg, filePath, ver);
+    writeFileSync(filePath, buf);
+    const hash = await contentHash(buf);
+    upsertFile(filePath, Date.now(), buf.length, hash, ver ?? 0);
+    console.log(`✓ ${filePath} (${fmtBytes(buf.length)})`);
+  });
 
 // ─── status ────────────────────────────────────────────────────────────────────
 program.command("status").description("Compare local files to server").action(async () => {
@@ -82,7 +92,7 @@ program.command("status").description("Compare local files to server").action(as
   console.log(`\n${"PATH".padEnd(40)} ${"LOCAL VER".padEnd(12)} ${"SERVER SIZE"}`);
   console.log("─".repeat(70));
   for (const rf of remoteList) {
-    const local = getFile(rf.path);
+    const local    = getFile(rf.path);
     const localVer = local ? `v${local.server_version}` : "(not pulled)";
     console.log(`${rf.path.padEnd(40)} ${localVer.padEnd(12)} ${fmtBytes(rf.totalSize)}`);
   }
