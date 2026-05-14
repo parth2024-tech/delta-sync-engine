@@ -15,6 +15,7 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as DocsRouteImport } from './routes/docs'
 import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ApiHealthRouteImport } from './routes/api/health'
 import { Route as AuthenticatedKeysRouteImport } from './routes/_authenticated/keys'
 import { Route as AuthenticatedJobsRouteImport } from './routes/_authenticated/jobs'
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
@@ -52,6 +53,11 @@ const AuthenticatedRoute = AuthenticatedRouteImport.update({
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiHealthRoute = ApiHealthRouteImport.update({
+  id: '/api/health',
+  path: '/api/health',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuthenticatedKeysRoute = AuthenticatedKeysRouteImport.update({
@@ -110,6 +116,7 @@ export interface FileRoutesByFullPath {
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/jobs': typeof AuthenticatedJobsRoute
   '/keys': typeof AuthenticatedKeysRoute
+  '/api/health': typeof ApiHealthRoute
   '/files/$fileId': typeof AuthenticatedFilesFileIdRoute
   '/files/': typeof AuthenticatedFilesIndexRoute
   '/api/public/sync/download': typeof ApiPublicSyncDownloadRoute
@@ -126,6 +133,7 @@ export interface FileRoutesByTo {
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/jobs': typeof AuthenticatedJobsRoute
   '/keys': typeof AuthenticatedKeysRoute
+  '/api/health': typeof ApiHealthRoute
   '/files/$fileId': typeof AuthenticatedFilesFileIdRoute
   '/files': typeof AuthenticatedFilesIndexRoute
   '/api/public/sync/download': typeof ApiPublicSyncDownloadRoute
@@ -144,6 +152,7 @@ export interface FileRoutesById {
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
   '/_authenticated/jobs': typeof AuthenticatedJobsRoute
   '/_authenticated/keys': typeof AuthenticatedKeysRoute
+  '/api/health': typeof ApiHealthRoute
   '/_authenticated/files/$fileId': typeof AuthenticatedFilesFileIdRoute
   '/_authenticated/files/': typeof AuthenticatedFilesIndexRoute
   '/api/public/sync/download': typeof ApiPublicSyncDownloadRoute
@@ -162,6 +171,7 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/jobs'
     | '/keys'
+    | '/api/health'
     | '/files/$fileId'
     | '/files/'
     | '/api/public/sync/download'
@@ -178,6 +188,7 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/jobs'
     | '/keys'
+    | '/api/health'
     | '/files/$fileId'
     | '/files'
     | '/api/public/sync/download'
@@ -195,6 +206,7 @@ export interface FileRouteTypes {
     | '/_authenticated/dashboard'
     | '/_authenticated/jobs'
     | '/_authenticated/keys'
+    | '/api/health'
     | '/_authenticated/files/$fileId'
     | '/_authenticated/files/'
     | '/api/public/sync/download'
@@ -210,6 +222,7 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   PlaygroundRoute: typeof PlaygroundRoute
   SitemapDotxmlRoute: typeof SitemapDotxmlRoute
+  ApiHealthRoute: typeof ApiHealthRoute
   ApiPublicSyncDownloadRoute: typeof ApiPublicSyncDownloadRoute
   ApiPublicSyncFilesRoute: typeof ApiPublicSyncFilesRoute
   ApiPublicSyncSignaturesRoute: typeof ApiPublicSyncSignaturesRoute
@@ -258,6 +271,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/health': {
+      id: '/api/health'
+      path: '/api/health'
+      fullPath: '/api/health'
+      preLoaderRoute: typeof ApiHealthRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_authenticated/keys': {
@@ -353,6 +373,7 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   PlaygroundRoute: PlaygroundRoute,
   SitemapDotxmlRoute: SitemapDotxmlRoute,
+  ApiHealthRoute: ApiHealthRoute,
   ApiPublicSyncDownloadRoute: ApiPublicSyncDownloadRoute,
   ApiPublicSyncFilesRoute: ApiPublicSyncFilesRoute,
   ApiPublicSyncSignaturesRoute: ApiPublicSyncSignaturesRoute,

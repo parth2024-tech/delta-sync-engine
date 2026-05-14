@@ -18,7 +18,7 @@ import type {} from "@tanstack/react-start";
 import { validateApiKey } from "@/lib/api-key-auth";
 import { db } from "../../../../../server/db";
 import { files, fileVersions, blocks, syncJobs } from "../../../../../shared/schema";
-import { storeBlock } from "../../../../../server/block-store";
+import { adler32, sha256Hex } from "../../../../../shared/hash";
 import { and, eq, max } from "drizzle-orm";
 import { z } from "zod";
 
@@ -28,7 +28,7 @@ const opSchema = z.discriminatedUnion("type", [
 ]);
 
 const metaSchema = z.object({
-  path:          z.string().min(1).max(1024),
+  path:          z.string().min(1).max(1024).refine(p => !p.startsWith('/') && !p.includes('../') && !p.includes('./'), "Invalid logical path traversal"),
   blockSize:     z.number().int().min(256).max(65536),
   newSize:       z.number().int().min(0),
   contentSha256: z.string().length(64),
@@ -50,16 +50,17 @@ const s3 = new S3Client({
 });
 const BUCKET_NAME = process.env.S3_BUCKET_NAME || "deltasync-blocks";
 
-const rateLimits = new Map<string, { count: number, resetAt: number }>();
-function checkRateLimit(userId: string) {
-  const now = Date.now();
-  let limit = rateLimits.get(userId);
-  if (!limit || limit.resetAt < now) {
-    limit = { count: 0, resetAt: now + 60000 };
-    rateLimits.set(userId, limit);
+import Redis from "ioredis";
+
+const redis = new Redis(process.env.REDIS_URL || "redis://localhost:6379");
+
+async function checkRateLimit(userId: string) {
+  const key = `rate_limit:${userId}`;
+  const count = await redis.incr(key);
+  if (count === 1) {
+    await redis.expire(key, 60);
   }
-  limit.count++;
-  return limit.count <= 60;
+  return count <= 60;
 }
 
 export const Route = createFileRoute("/api/public/sync/upload")({
@@ -69,7 +70,7 @@ export const Route = createFileRoute("/api/public/sync/upload")({
         const userId = await validateApiKey(request.headers.get("Authorization"));
         if (!userId) return json({ error: "Unauthorized" }, 401);
 
-        if (!checkRateLimit(userId)) {
+        if (!(await checkRateLimit(userId))) {
           return json({ error: "Rate limit exceeded" }, 429);
         }
 
@@ -202,58 +203,65 @@ export const Route = createFileRoute("/api/public/sync/upload")({
         // ── persist to DB in a single transaction ────────────────────────────
         let returnVal = { versionNo: 0, bytesSaved };
 
-        await db.transaction(async (tx) => {
-          let fileId: string;
-          if (existingFile) {
-            fileId = existingFile.id;
-          } else {
-            const [f] = await tx.insert(files)
-              .values({ userId, path: meta.path, totalSize: meta.newSize })
-              .returning();
-            fileId = f.id;
-          }
-
-          const [{ maxVer }] = await tx
-            .select({ maxVer: max(fileVersions.versionNo) })
-            .from(fileVersions)
-            .where(eq(fileVersions.fileId, fileId));
-          const nextVer = (maxVer ?? 0) + 1;
-
-          const [version] = await tx.insert(fileVersions).values({
-            fileId,
-            versionNo:    nextVer,
-            size:         meta.newSize,
-            totalBlocks:  resolved.length,
-            blockSize:    meta.blockSize,
-            contentSha256: meta.contentSha256,
-          }).returning();
-
-          const chunkSize = 500;
-          for (let i = 0; i < resolved.length; i += chunkSize) {
-            const chunk = resolved.slice(i, i + chunkSize);
-            const values = chunk.map((r, idx) => ({
-              versionId: version.id,
-              blockIndex: i + idx,
-              weakHash: r.kind === "literal" ? r.weakHash : 0,
-              strongHash: r.strongHash,
-            }));
-            if (values.length > 0) {
-              await tx.insert(blocks).values(values);
+        try {
+          await db.transaction(async (tx) => {
+            let fileId: string;
+            if (existingFile) {
+              fileId = existingFile.id;
+            } else {
+              const [f] = await tx.insert(files)
+                .values({ userId, path: meta.path, totalSize: meta.newSize })
+                .returning();
+              fileId = f.id;
             }
-          }
 
-          await tx.update(files)
-            .set({ currentVersionId: version.id, totalSize: meta.newSize })
-            .where(eq(files.id, fileId));
+            const [{ maxVer }] = await tx
+              .select({ maxVer: max(fileVersions.versionNo) })
+              .from(fileVersions)
+              .where(eq(fileVersions.fileId, fileId));
+            const nextVer = (maxVer ?? 0) + 1;
 
-          await tx.insert(syncJobs).values({
-            userId, fileId, direction: "push",
-            bytesTransferred, bytesSaved, status: "done",
-            finishedAt: new Date(),
+            const [version] = await tx.insert(fileVersions).values({
+              fileId,
+              versionNo:    nextVer,
+              size:         meta.newSize,
+              totalBlocks:  resolved.length,
+              blockSize:    meta.blockSize,
+              contentSha256: meta.contentSha256,
+            }).returning();
+
+            const chunkSize = 500;
+            for (let i = 0; i < resolved.length; i += chunkSize) {
+              const chunk = resolved.slice(i, i + chunkSize);
+              const values = chunk.map((r, idx) => ({
+                versionId: version.id,
+                blockIndex: i + idx,
+                weakHash: r.kind === "literal" ? r.weakHash : 0,
+                strongHash: r.strongHash,
+              }));
+              if (values.length > 0) {
+                await tx.insert(blocks).values(values);
+              }
+            }
+
+            await tx.update(files)
+              .set({ currentVersionId: version.id, totalSize: meta.newSize })
+              .where(eq(files.id, fileId));
+
+            await tx.insert(syncJobs).values({
+              userId, fileId, direction: "push",
+              bytesTransferred, bytesSaved, status: "done",
+              finishedAt: new Date(),
+            });
+
+            returnVal = { versionNo: nextVer, bytesSaved };
           });
-
-          returnVal = { versionNo: nextVer, bytesSaved };
-        });
+        } catch (err: any) {
+          if (err.code === "23505" || err.message?.includes("unique constraint")) {
+            return json({ error: "Concurrent sync conflict. Please pull and retry." }, 409);
+          }
+          throw err;
+        }
 
         return json(returnVal);
       },
@@ -268,17 +276,4 @@ function json(data: unknown, status = 200) {
   });
 }
 
-async function sha256Hex(data: Uint8Array): Promise<string> {
-  const buf = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
-}
 
-const MOD_ADLER = 65521;
-function adler32(data: Uint8Array): number {
-  let a = 1, b = 0;
-  for (let i = 0; i < data.length; i++) {
-    a = (a + data[i]) % MOD_ADLER;
-    b = (b + a) % MOD_ADLER;
-  }
-  return ((b << 16) | a) >>> 0;
-}
