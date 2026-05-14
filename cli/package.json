@@ -1,0 +1,21 @@
+{
+  "name": "deltasync-cli",
+  "version": "0.1.0",
+  "description": "Deltasync reference CLI — delta-based file sync",
+  "type": "module",
+  "bin": { "deltasync": "./dist/index.js" },
+  "scripts": {
+    "build": "tsc",
+    "dev":   "tsx src/index.ts"
+  },
+  "dependencies": {
+    "commander":    "^12.1.0",
+    "better-sqlite3": "^9.6.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node":           "^22.0.0",
+    "tsx":                   "^4.15.6",
+    "typescript":            "^5.5.3"
+  }
+}

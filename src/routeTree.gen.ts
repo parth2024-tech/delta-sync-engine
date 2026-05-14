@@ -11,9 +11,19 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SitemapDotxmlRouteImport } from './routes/sitemap[.]xml'
 import { Route as PlaygroundRouteImport } from './routes/playground'
+import { Route as LoginRouteImport } from './routes/login'
 import { Route as DocsRouteImport } from './routes/docs'
-import { Route as DashboardRouteImport } from './routes/dashboard'
+import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AuthenticatedKeysRouteImport } from './routes/_authenticated/keys'
+import { Route as AuthenticatedJobsRouteImport } from './routes/_authenticated/jobs'
+import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
+import { Route as AuthenticatedFilesIndexRouteImport } from './routes/_authenticated/files/index'
+import { Route as AuthenticatedFilesFileIdRouteImport } from './routes/_authenticated/files/$fileId'
+import { Route as ApiPublicSyncUploadRouteImport } from './routes/api/public/sync/upload'
+import { Route as ApiPublicSyncSignaturesRouteImport } from './routes/api/public/sync/signatures'
+import { Route as ApiPublicSyncFilesRouteImport } from './routes/api/public/sync/files'
+import { Route as ApiPublicSyncDownloadRouteImport } from './routes/api/public/sync/download'
 
 const SitemapDotxmlRoute = SitemapDotxmlRouteImport.update({
   id: '/sitemap.xml',
@@ -25,14 +35,18 @@ const PlaygroundRoute = PlaygroundRouteImport.update({
   path: '/playground',
   getParentRoute: () => rootRouteImport,
 } as any)
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DocsRoute = DocsRouteImport.update({
   id: '/docs',
   path: '/docs',
   getParentRoute: () => rootRouteImport,
 } as any)
-const DashboardRoute = DashboardRouteImport.update({
-  id: '/dashboard',
-  path: '/dashboard',
+const AuthenticatedRoute = AuthenticatedRouteImport.update({
+  id: '/_authenticated',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -40,43 +54,166 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AuthenticatedKeysRoute = AuthenticatedKeysRouteImport.update({
+  id: '/keys',
+  path: '/keys',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
+const AuthenticatedJobsRoute = AuthenticatedJobsRouteImport.update({
+  id: '/jobs',
+  path: '/jobs',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
+const AuthenticatedDashboardRoute = AuthenticatedDashboardRouteImport.update({
+  id: '/dashboard',
+  path: '/dashboard',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
+const AuthenticatedFilesIndexRoute = AuthenticatedFilesIndexRouteImport.update({
+  id: '/files/',
+  path: '/files/',
+  getParentRoute: () => AuthenticatedRoute,
+} as any)
+const AuthenticatedFilesFileIdRoute =
+  AuthenticatedFilesFileIdRouteImport.update({
+    id: '/files/$fileId',
+    path: '/files/$fileId',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
+const ApiPublicSyncUploadRoute = ApiPublicSyncUploadRouteImport.update({
+  id: '/api/public/sync/upload',
+  path: '/api/public/sync/upload',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiPublicSyncSignaturesRoute = ApiPublicSyncSignaturesRouteImport.update({
+  id: '/api/public/sync/signatures',
+  path: '/api/public/sync/signatures',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiPublicSyncFilesRoute = ApiPublicSyncFilesRouteImport.update({
+  id: '/api/public/sync/files',
+  path: '/api/public/sync/files',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiPublicSyncDownloadRoute = ApiPublicSyncDownloadRouteImport.update({
+  id: '/api/public/sync/download',
+  path: '/api/public/sync/download',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/dashboard': typeof DashboardRoute
   '/docs': typeof DocsRoute
+  '/login': typeof LoginRoute
   '/playground': typeof PlaygroundRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
+  '/dashboard': typeof AuthenticatedDashboardRoute
+  '/jobs': typeof AuthenticatedJobsRoute
+  '/keys': typeof AuthenticatedKeysRoute
+  '/files/$fileId': typeof AuthenticatedFilesFileIdRoute
+  '/files/': typeof AuthenticatedFilesIndexRoute
+  '/api/public/sync/download': typeof ApiPublicSyncDownloadRoute
+  '/api/public/sync/files': typeof ApiPublicSyncFilesRoute
+  '/api/public/sync/signatures': typeof ApiPublicSyncSignaturesRoute
+  '/api/public/sync/upload': typeof ApiPublicSyncUploadRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/dashboard': typeof DashboardRoute
   '/docs': typeof DocsRoute
+  '/login': typeof LoginRoute
   '/playground': typeof PlaygroundRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
+  '/dashboard': typeof AuthenticatedDashboardRoute
+  '/jobs': typeof AuthenticatedJobsRoute
+  '/keys': typeof AuthenticatedKeysRoute
+  '/files/$fileId': typeof AuthenticatedFilesFileIdRoute
+  '/files': typeof AuthenticatedFilesIndexRoute
+  '/api/public/sync/download': typeof ApiPublicSyncDownloadRoute
+  '/api/public/sync/files': typeof ApiPublicSyncFilesRoute
+  '/api/public/sync/signatures': typeof ApiPublicSyncSignaturesRoute
+  '/api/public/sync/upload': typeof ApiPublicSyncUploadRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/dashboard': typeof DashboardRoute
+  '/_authenticated': typeof AuthenticatedRouteWithChildren
   '/docs': typeof DocsRoute
+  '/login': typeof LoginRoute
   '/playground': typeof PlaygroundRoute
   '/sitemap.xml': typeof SitemapDotxmlRoute
+  '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
+  '/_authenticated/jobs': typeof AuthenticatedJobsRoute
+  '/_authenticated/keys': typeof AuthenticatedKeysRoute
+  '/_authenticated/files/$fileId': typeof AuthenticatedFilesFileIdRoute
+  '/_authenticated/files/': typeof AuthenticatedFilesIndexRoute
+  '/api/public/sync/download': typeof ApiPublicSyncDownloadRoute
+  '/api/public/sync/files': typeof ApiPublicSyncFilesRoute
+  '/api/public/sync/signatures': typeof ApiPublicSyncSignaturesRoute
+  '/api/public/sync/upload': typeof ApiPublicSyncUploadRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/dashboard' | '/docs' | '/playground' | '/sitemap.xml'
+  fullPaths:
+    | '/'
+    | '/docs'
+    | '/login'
+    | '/playground'
+    | '/sitemap.xml'
+    | '/dashboard'
+    | '/jobs'
+    | '/keys'
+    | '/files/$fileId'
+    | '/files/'
+    | '/api/public/sync/download'
+    | '/api/public/sync/files'
+    | '/api/public/sync/signatures'
+    | '/api/public/sync/upload'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/dashboard' | '/docs' | '/playground' | '/sitemap.xml'
-  id: '__root__' | '/' | '/dashboard' | '/docs' | '/playground' | '/sitemap.xml'
+  to:
+    | '/'
+    | '/docs'
+    | '/login'
+    | '/playground'
+    | '/sitemap.xml'
+    | '/dashboard'
+    | '/jobs'
+    | '/keys'
+    | '/files/$fileId'
+    | '/files'
+    | '/api/public/sync/download'
+    | '/api/public/sync/files'
+    | '/api/public/sync/signatures'
+    | '/api/public/sync/upload'
+  id:
+    | '__root__'
+    | '/'
+    | '/_authenticated'
+    | '/docs'
+    | '/login'
+    | '/playground'
+    | '/sitemap.xml'
+    | '/_authenticated/dashboard'
+    | '/_authenticated/jobs'
+    | '/_authenticated/keys'
+    | '/_authenticated/files/$fileId'
+    | '/_authenticated/files/'
+    | '/api/public/sync/download'
+    | '/api/public/sync/files'
+    | '/api/public/sync/signatures'
+    | '/api/public/sync/upload'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  DashboardRoute: typeof DashboardRoute
+  AuthenticatedRoute: typeof AuthenticatedRouteWithChildren
   DocsRoute: typeof DocsRoute
+  LoginRoute: typeof LoginRoute
   PlaygroundRoute: typeof PlaygroundRoute
   SitemapDotxmlRoute: typeof SitemapDotxmlRoute
+  ApiPublicSyncDownloadRoute: typeof ApiPublicSyncDownloadRoute
+  ApiPublicSyncFilesRoute: typeof ApiPublicSyncFilesRoute
+  ApiPublicSyncSignaturesRoute: typeof ApiPublicSyncSignaturesRoute
+  ApiPublicSyncUploadRoute: typeof ApiPublicSyncUploadRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -95,6 +232,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PlaygroundRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/docs': {
       id: '/docs'
       path: '/docs'
@@ -102,11 +246,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DocsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/dashboard': {
-      id: '/dashboard'
-      path: '/dashboard'
-      fullPath: '/dashboard'
-      preLoaderRoute: typeof DashboardRouteImport
+    '/_authenticated': {
+      id: '/_authenticated'
+      path: ''
+      fullPath: '/'
+      preLoaderRoute: typeof AuthenticatedRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -116,15 +260,103 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_authenticated/keys': {
+      id: '/_authenticated/keys'
+      path: '/keys'
+      fullPath: '/keys'
+      preLoaderRoute: typeof AuthenticatedKeysRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/jobs': {
+      id: '/_authenticated/jobs'
+      path: '/jobs'
+      fullPath: '/jobs'
+      preLoaderRoute: typeof AuthenticatedJobsRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/dashboard': {
+      id: '/_authenticated/dashboard'
+      path: '/dashboard'
+      fullPath: '/dashboard'
+      preLoaderRoute: typeof AuthenticatedDashboardRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/files/': {
+      id: '/_authenticated/files/'
+      path: '/files'
+      fullPath: '/files/'
+      preLoaderRoute: typeof AuthenticatedFilesIndexRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/files/$fileId': {
+      id: '/_authenticated/files/$fileId'
+      path: '/files/$fileId'
+      fullPath: '/files/$fileId'
+      preLoaderRoute: typeof AuthenticatedFilesFileIdRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/api/public/sync/upload': {
+      id: '/api/public/sync/upload'
+      path: '/api/public/sync/upload'
+      fullPath: '/api/public/sync/upload'
+      preLoaderRoute: typeof ApiPublicSyncUploadRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/public/sync/signatures': {
+      id: '/api/public/sync/signatures'
+      path: '/api/public/sync/signatures'
+      fullPath: '/api/public/sync/signatures'
+      preLoaderRoute: typeof ApiPublicSyncSignaturesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/public/sync/files': {
+      id: '/api/public/sync/files'
+      path: '/api/public/sync/files'
+      fullPath: '/api/public/sync/files'
+      preLoaderRoute: typeof ApiPublicSyncFilesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/public/sync/download': {
+      id: '/api/public/sync/download'
+      path: '/api/public/sync/download'
+      fullPath: '/api/public/sync/download'
+      preLoaderRoute: typeof ApiPublicSyncDownloadRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
+interface AuthenticatedRouteChildren {
+  AuthenticatedDashboardRoute: typeof AuthenticatedDashboardRoute
+  AuthenticatedJobsRoute: typeof AuthenticatedJobsRoute
+  AuthenticatedKeysRoute: typeof AuthenticatedKeysRoute
+  AuthenticatedFilesFileIdRoute: typeof AuthenticatedFilesFileIdRoute
+  AuthenticatedFilesIndexRoute: typeof AuthenticatedFilesIndexRoute
+}
+
+const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
+  AuthenticatedDashboardRoute: AuthenticatedDashboardRoute,
+  AuthenticatedJobsRoute: AuthenticatedJobsRoute,
+  AuthenticatedKeysRoute: AuthenticatedKeysRoute,
+  AuthenticatedFilesFileIdRoute: AuthenticatedFilesFileIdRoute,
+  AuthenticatedFilesIndexRoute: AuthenticatedFilesIndexRoute,
+}
+
+const AuthenticatedRouteWithChildren = AuthenticatedRoute._addFileChildren(
+  AuthenticatedRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  DashboardRoute: DashboardRoute,
+  AuthenticatedRoute: AuthenticatedRouteWithChildren,
   DocsRoute: DocsRoute,
+  LoginRoute: LoginRoute,
   PlaygroundRoute: PlaygroundRoute,
   SitemapDotxmlRoute: SitemapDotxmlRoute,
+  ApiPublicSyncDownloadRoute: ApiPublicSyncDownloadRoute,
+  ApiPublicSyncFilesRoute: ApiPublicSyncFilesRoute,
+  ApiPublicSyncSignaturesRoute: ApiPublicSyncSignaturesRoute,
+  ApiPublicSyncUploadRoute: ApiPublicSyncUploadRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

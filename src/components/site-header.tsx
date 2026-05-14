@@ -20,18 +20,17 @@ export function SiteHeader() {
             Playground
           </Link>
           <Link
-            to="/dashboard"
-            className="rounded-md px-3 py-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-            activeProps={{ className: "rounded-md px-3 py-1.5 bg-secondary text-foreground" }}
-          >
-            Dashboard
-          </Link>
-          <Link
             to="/docs"
             className="rounded-md px-3 py-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
             activeProps={{ className: "rounded-md px-3 py-1.5 bg-secondary text-foreground" }}
           >
             Docs
+          </Link>
+          <Link
+            to="/login"
+            className="ml-2 rounded-md bg-primary px-3 py-1.5 font-mono text-sm font-semibold text-primary-foreground transition hover:bg-primary/90"
+          >
+            Sign in →
           </Link>
         </nav>
       </div>
