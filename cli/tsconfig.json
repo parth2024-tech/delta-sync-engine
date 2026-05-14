@@ -9,5 +9,5 @@
     "skipLibCheck":      true,
     "esModuleInterop":   true
   },
-  "include": ["src/**/*.ts", "../shared/fastcdc.ts", "../shared/chunk-manifest.ts", "../shared/hash.ts"]
+  "include": ["src/**/*.ts", "../shared/fastcdc.ts", "../shared/chunk-manifest.ts", "../shared/hash.ts", "../shared/ops-binary.ts"]
 }

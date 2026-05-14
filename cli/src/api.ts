@@ -1,6 +1,5 @@
 /**
- * Phase 2 — CLI API client using multipart/form-data for upload.
- * No more base64 literals: raw bytes go in a binary form field.
+ * Multipart upload: meta JSON + optional `opsBin` + raw literal bytes.
  */
 
 import type { Config } from "./config.js";
@@ -31,20 +30,35 @@ export async function getSignatures(cfg: Config, path: string) {
   } | null>;
 }
 
+export type UploadMetaJson = {
+  path: string;
+  chunking: "cdc" | "fixed";
+  blockSize: number;
+  newSize: number;
+  contentSha256: string;
+  opsEncoding: "json" | "bin";
+  opCount?: number;
+  ops?: Op[];
+};
+
 /**
- * Phase 2 multipart upload — no base64 overhead.
- *
- * @param meta         JSON metadata: path, blockSize, newSize, contentSha256, ops
- *                     Literal ops carry { literalOffset, literalLength } into literalBytes.
- * @param literalBytes Concatenated raw bytes of all literal runs.
+ * @param opsBin When set, `meta` must omit `ops` and use `opsEncoding: "bin"` + `opCount`.
  */
 export async function upload(
   cfg: Config,
-  meta: { path: string; chunking: "cdc" | "fixed"; blockSize: number; newSize: number; contentSha256: string; ops: Op[] },
+  meta: UploadMetaJson,
   literalBytes: Buffer,
+  opsBin?: Buffer,
 ): Promise<{ versionNo: number; bytesSaved: number }> {
   const form = new FormData();
   form.append("meta", JSON.stringify(meta));
+  if (opsBin && opsBin.length > 0) {
+    form.append(
+      "opsBin",
+      new Blob([new Uint8Array(opsBin)], { type: "application/octet-stream" }),
+      "ops.bin",
+    );
+  }
   if (literalBytes.length > 0) {
     form.append(
       "literals",
@@ -53,7 +67,6 @@ export async function upload(
     );
   }
 
-  // Do NOT set Content-Type — FormData sets it with the multipart boundary automatically
   const r = await fetch(`${cfg.serverUrl}/api/public/sync/upload`, {
     method:  "POST",
     headers: authHeader(cfg),

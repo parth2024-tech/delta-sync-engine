@@ -1,10 +1,7 @@
 /**
- * Multipart upload: meta JSON + raw literal bytes.
- * Concurrent uploads for the same logical file are serialized with pg_advisory_xact_lock
- * so each client gets the next version number instead of 409 unique violations.
- *
- * Chunk metadata is stored in a single packed `chunk_manifest` bytea per version
- * (no per-chunk table rows).
+ * Multipart upload: meta JSON + optional binary ops (`opsBin`) + raw literal bytes.
+ * Uses pg advisory lock, packed chunk_manifest, bounded S3 concurrency, and
+ * skips server-side CopyObject when the content-addressed key already exists.
  */
 
 import { createFileRoute } from "@tanstack/react-router";
@@ -13,19 +10,22 @@ import { validateApiKey } from "@/lib/api-key-auth";
 import { db } from "../../../../../server/db";
 import { files, fileVersions, syncJobs } from "../../../../../shared/schema";
 import { encodeChunkManifestV1 } from "../../../../../shared/chunk-manifest";
+import { decodeOpsBinaryV1, opSchema } from "../../../../../shared/ops-binary";
+import type { UploadOp } from "../../../../../shared/ops-binary";
 import { loadVersionChunks } from "../../../../../server/version-chunks";
+import { createS3Limiter } from "../../../../../server/s3-limiter";
 import { max, eq, and, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { PassThrough } from "node:stream";
 import crypto from "node:crypto";
 import { Upload } from "@aws-sdk/lib-storage";
-import { S3Client, CopyObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
-
-const opSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("copy"), blockIndex: z.number().int().min(0) }),
-  z.object({ type: z.literal("literal"), literalOffset: z.number().int().min(0), literalLength: z.number().int().min(1) }),
-]);
+import {
+  S3Client,
+  CopyObjectCommand,
+  DeleteObjectCommand,
+  HeadObjectCommand,
+} from "@aws-sdk/client-s3";
 
 const metaSchema = z.object({
   path:          z.string().min(1).max(1024).refine(p => !p.startsWith('/') && !p.includes('../') && !p.includes('./'), "Invalid logical path traversal"),
@@ -33,7 +33,18 @@ const metaSchema = z.object({
   blockSize:     z.number().int().min(256).max(1048576),
   newSize:       z.number().int().min(0),
   contentSha256: z.string().length(64),
-  ops:           z.array(opSchema),
+  opsEncoding:   z.enum(["json", "bin"]).optional().default("json"),
+  /** Required when opsEncoding is `bin` (must match decoded `opsBin` length). */
+  opCount:       z.number().int().min(0).optional(),
+  ops:           z.array(opSchema).optional(),
+}).superRefine((m, ctx) => {
+  if (m.opsEncoding === "bin") {
+    if (m.opCount === undefined) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "opCount required when opsEncoding is bin" });
+    }
+  } else if (!m.ops || (m.ops.length === 0 && m.newSize > 0)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "ops array required when opsEncoding is json" });
+  }
 });
 
 const s3 = new S3Client({
@@ -45,6 +56,10 @@ const s3 = new S3Client({
   },
 });
 const BUCKET_NAME = process.env.S3_BUCKET_NAME || "deltasync-blocks";
+
+const s3Limited = createS3Limiter(
+  Math.max(1, Math.min(32, parseInt(process.env.S3_UPLOAD_CONCURRENCY || "6", 10) || 6)),
+);
 
 import Redis from "ioredis";
 
@@ -59,10 +74,18 @@ async function checkRateLimit(userId: string) {
   return count <= 60;
 }
 
-/** Yield so other HTTP handlers can run during long Adler-32 loops. */
-async function yieldIfNeeded(byteIndex: number): Promise<void> {
-  if (byteIndex > 0 && byteIndex % 65536 === 0) {
-    await new Promise<void>((r) => setImmediate(r));
+async function blockExists(key: string): Promise<boolean> {
+  try {
+    await s3Limited(() =>
+      s3.send(new HeadObjectCommand({ Bucket: BUCKET_NAME, Key: key })),
+    );
+    return true;
+  } catch (e: unknown) {
+    const name = (e as { name?: string })?.name;
+    const code = (e as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode;
+    const s3code = (e as { Code?: string })?.Code;
+    if (name === "NotFound" || code === 404 || s3code === "404" || s3code === "NoSuchKey") return false;
+    throw e;
   }
 }
 
@@ -93,6 +116,27 @@ export const Route = createFileRoute("/api/public/sync/upload")({
         try { meta = metaSchema.parse(JSON.parse(metaStr)); }
         catch (e) { return json({ error: "Invalid meta: " + String(e) }, 400); }
 
+        let ops: UploadOp[];
+        if (meta.opsEncoding === "bin") {
+          const opsEntry = formData.get("opsBin");
+          if (!(opsEntry instanceof Blob)) {
+            return json({ error: "Missing opsBin field when opsEncoding is bin" }, 400);
+          }
+          let buf: Buffer;
+          try { buf = Buffer.from(await opsEntry.arrayBuffer()); }
+          catch { return json({ error: "Invalid opsBin" }, 400); }
+          try {
+            ops = decodeOpsBinaryV1(buf);
+          } catch (e) {
+            return json({ error: "Invalid ops binary: " + String(e) }, 400);
+          }
+          if (ops.length !== meta.opCount) {
+            return json({ error: `opCount ${meta.opCount} does not match decoded ops (${ops.length})` }, 400);
+          }
+        } else {
+          ops = meta.ops!;
+        }
+
         const literalsEntry = formData.get("literals");
         if (literalsEntry && !(literalsEntry instanceof Blob)) {
           return json({ error: "Invalid literals" }, 400);
@@ -103,7 +147,7 @@ export const Route = createFileRoute("/api/public/sync/upload")({
 
         const snapshotCurrentVersionId = existingFile?.currentVersionId ?? null;
 
-        let prevChunks = await (async () => {
+        const prevChunks = await (async () => {
           if (!existingFile?.currentVersionId) return [];
           const [ver] = await db.select().from(fileVersions)
             .where(eq(fileVersions.id, existingFile.currentVersionId));
@@ -113,7 +157,7 @@ export const Route = createFileRoute("/api/public/sync/upload")({
 
         const prevByIndex = new Map(prevChunks.map((c) => [c.blockIndex, c]));
 
-        for (const op of meta.ops) {
+        for (const op of ops) {
           if (op.type === "copy" && !prevByIndex.has(op.blockIndex)) {
             return json({ error: `Copy op references unknown block ${op.blockIndex}` }, 400);
           }
@@ -129,7 +173,7 @@ export const Route = createFileRoute("/api/public/sync/upload")({
           const reader = stream.getReader();
           let currentChunk = new Uint8Array(0);
 
-          for (const op of meta.ops) {
+          for (const op of ops) {
             if (op.type === "copy") {
               const pc = prevByIndex.get(op.blockIndex)!;
               manifestRows.push({
@@ -155,7 +199,6 @@ export const Route = createFileRoute("/api/public/sync/upload")({
               const MOD_ADLER = 65521;
 
               let remaining = length;
-              let adlerByteIdx = 0;
               while (remaining > 0) {
                 if (currentChunk.length === 0) {
                   const { done, value } = await reader.read();
@@ -170,7 +213,6 @@ export const Route = createFileRoute("/api/public/sync/upload")({
                 hashObj.update(slice);
 
                 for (let i = 0; i < slice.length; i++) {
-                  await yieldIfNeeded(adlerByteIdx++);
                   weakA = (weakA + slice[i]!) % MOD_ADLER;
                   weakB = (weakB + weakA) % MOD_ADLER;
                 }
@@ -185,17 +227,22 @@ export const Route = createFileRoute("/api/public/sync/upload")({
               const strongHash = hashObj.digest("hex");
               const weakHash = ((weakB << 16) | weakA) >>> 0;
 
-              try {
-                await s3.send(new CopyObjectCommand({
-                  Bucket:     BUCKET_NAME,
-                  CopySource: `${BUCKET_NAME}/${tempKey}`,
-                  Key:        strongHash,
-                }));
-              } catch { /* object may already exist */ }
-              await s3.send(new DeleteObjectCommand({
-                Bucket: BUCKET_NAME,
-                Key:    tempKey,
-              }));
+              const exists = await blockExists(strongHash);
+              if (!exists) {
+                await s3Limited(() =>
+                  s3.send(new CopyObjectCommand({
+                    Bucket:     BUCKET_NAME,
+                    CopySource: `${BUCKET_NAME}/${tempKey}`,
+                    Key:        strongHash,
+                  })),
+                );
+              }
+              await s3Limited(() =>
+                s3.send(new DeleteObjectCommand({
+                  Bucket: BUCKET_NAME,
+                  Key:    tempKey,
+                })),
+              );
 
               manifestRows.push({
                 offset:        runningOffset,
@@ -207,7 +254,7 @@ export const Route = createFileRoute("/api/public/sync/upload")({
             }
           }
         } else {
-          for (const op of meta.ops) {
+          for (const op of ops) {
             if (op.type === "copy") {
               const pc = prevByIndex.get(op.blockIndex)!;
               manifestRows.push({

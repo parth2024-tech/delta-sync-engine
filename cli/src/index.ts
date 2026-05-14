@@ -1,13 +1,34 @@
 #!/usr/bin/env node
+import { spawnSync } from "node:child_process";
+import { readFileSync, writeFileSync, statSync, existsSync, mkdtempSync, rmSync } from "fs";
+import { tmpdir } from "node:os";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { createInterface } from "readline";
 import { Command } from "commander";
 
-const program = new Command();
-import { readFileSync, writeFileSync, statSync, existsSync } from "fs";
-import { createInterface } from "readline";
 import { readConfig, writeConfig } from "./config.js";
 import { getFile, upsertFile } from "./db.js";
-import { computeDelta, contentHash } from "./rsync.js";
+import { computeDelta, contentHash, encodeOpsBinaryV1 } from "./rsync.js";
+import type { Op } from "./rsync.js";
+import { decodeOpsBinaryV1 } from "../../shared/ops-binary.js";
 import * as api from "./api.js";
+import type { UploadMetaJson } from "./api.js";
+
+const program = new Command();
+
+function resolveNativeBinary(): string | null {
+  const fromEnv = process.env.DELTASYNC_NATIVE;
+  if (fromEnv && existsSync(fromEnv)) return fromEnv;
+  const here = dirname(fileURLToPath(import.meta.url));
+  const release = join(here, "../../../../native/target/release/deltasync-native");
+  if (existsSync(release)) return release;
+  const debug = join(here, "../../../../native/target/debug/deltasync-native");
+  if (existsSync(debug)) return debug;
+  return null;
+}
+
+const OP_BIN_THRESHOLD = Math.max(1, parseInt(process.env.OP_BIN_THRESHOLD || "8192", 10) || 8192);
 
 program.name("deltasync").description("Delta-based file sync CLI").version("0.1.0");
 
@@ -49,22 +70,108 @@ program.command("push <file>").description("Push a local file to the server").ac
     console.log("  remote: new file (CDC avg 16 KiB)");
   }
 
-  const { ops, literalBytes } = await computeDelta(
+  const nativeBin = resolveNativeBinary();
+  const minNative = Math.max(0, parseInt(process.env.DELTASYNC_NATIVE_MIN_BYTES || "2097152", 10) || 2097152);
+  const useNativePack = Boolean(nativeBin && chunking === "cdc" && data.length >= minNative);
+
+  let ops: Op[];
+  let literalBytes: Buffer;
+
+  if (useNativePack && nativeBin) {
+    console.log(`  using native pack-delta (${nativeBin})`);
+    const dir = mkdtempSync(join(tmpdir(), "deltasync-"));
+    try {
+      const remotePath = join(dir, "remote.json");
+      writeFileSync(remotePath, JSON.stringify(remote ?? { signatures: [], blockSize, chunking }));
+      const outOps = join(dir, "ops.bin");
+      const outLit = join(dir, "literals.bin");
+      const r = spawnSync(
+        nativeBin,
+        [
+          "pack-delta",
+          "--local", filePath,
+          "--remote-json", remotePath,
+          "--out-ops", outOps,
+          "--out-literals", outLit,
+          "--block-size", String(blockSize),
+          "--chunking", "cdc",
+        ],
+        { encoding: "utf8" },
+      );
+      if (r.error) throw r.error;
+      if (r.status !== 0) {
+        const errMsg = [r.stderr, r.stdout].map((x) => (x == null ? "" : String(x))).join("\n").trim();
+        throw new Error(errMsg || "native pack-delta failed");
+      }
+      literalBytes = readFileSync(outLit);
+      const opsBin = readFileSync(outOps);
+      const decoded = decodeOpsBinaryV1(opsBin);
+      const meta: UploadMetaJson = {
+        path:          filePath,
+        chunking,
+        blockSize,
+        newSize:       data.length,
+        contentSha256: hash,
+        opsEncoding:   "bin",
+        opCount:       decoded.length,
+      };
+      const literals = decoded.filter((o: Op) => o.type === "literal").length;
+      const copies   = decoded.filter((o: Op) => o.type === "copy").length;
+      console.log(`  delta: ${literals} literal run(s), ${copies} copy op(s) [native]`);
+      console.log(`  literal payload: ${fmtBytes(literalBytes.length)} raw`);
+      console.log(`  ops wire: binary (${opsBin.length} B)`);
+
+      const result = await api.upload(cfg, meta, literalBytes, opsBin);
+      upsertFile(filePath, stat.mtimeMs, stat.size, hash, result.versionNo);
+      const savedPct = data.length > 0 ? Math.round((result.bytesSaved / data.length) * 100) : 0;
+      console.log(`✓ pushed v${result.versionNo} — saved ${fmtBytes(result.bytesSaved)} (${savedPct}%)`);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+    return;
+  }
+
+  const delta = await computeDelta(
     data,
     remote?.signatures ?? [],
     { chunking, blockSize },
   );
+  ops = delta.ops;
+  literalBytes = delta.literalBytes;
 
   const literals = ops.filter((o) => o.type === "literal").length;
   const copies   = ops.filter((o) => o.type === "copy").length;
   console.log(`  delta: ${literals} literal run(s), ${copies} copy op(s)`);
-  console.log(`  literal payload: ${fmtBytes(literalBytes.length)} raw (was base64 before)`);
+  console.log(`  literal payload: ${fmtBytes(literalBytes.length)} raw`);
 
-  const result = await api.upload(
-    cfg,
-    { path: filePath, chunking, blockSize, newSize: data.length, contentSha256: hash, ops },
-    literalBytes,
-  );
+  const useBin = ops.length >= OP_BIN_THRESHOLD || process.env.FORCE_OPS_BIN === "1";
+  let result: { versionNo: number; bytesSaved: number };
+  if (useBin) {
+    const opsBin = encodeOpsBinaryV1(ops);
+    console.log(`  ops wire: binary (${opsBin.length} B, threshold ${OP_BIN_THRESHOLD})`);
+    const meta: UploadMetaJson = {
+      path:          filePath,
+      chunking,
+      blockSize,
+      newSize:       data.length,
+      contentSha256: hash,
+      opsEncoding:   "bin",
+      opCount:       ops.length,
+    };
+    result = await api.upload(cfg, meta, literalBytes, opsBin);
+  } else {
+    console.log(`  ops wire: JSON (${ops.length} op(s))`);
+    const meta: UploadMetaJson = {
+      path:          filePath,
+      chunking,
+      blockSize,
+      newSize:       data.length,
+      contentSha256: hash,
+      opsEncoding:   "json",
+      ops,
+    };
+    result = await api.upload(cfg, meta, literalBytes);
+  }
 
   upsertFile(filePath, stat.mtimeMs, stat.size, hash, result.versionNo);
   const savedPct = data.length > 0 ? Math.round((result.bytesSaved / data.length) * 100) : 0;

@@ -6,6 +6,8 @@
 import { cdcRanges } from "../../shared/fastcdc.js";
 import { adler32, sha256Hex } from "../../shared/hash.js";
 
+export { encodeOpsBinaryV1 } from "../../shared/ops-binary.js";
+
 export interface Signature {
   blockIndex: number;
   weakHash:   number;
