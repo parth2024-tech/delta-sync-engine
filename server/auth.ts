@@ -1,9 +1,10 @@
 import { SignJWT, jwtVerify } from "jose";
 import bcrypt from "bcryptjs";
 
-const secret = new TextEncoder().encode(
-  process.env.JWT_SECRET ?? "deltasync-dev-secret-please-change-in-production"
-);
+if (!process.env.JWT_SECRET) {
+  throw new Error("JWT_SECRET environment variable is missing. Halting startup for security.");
+}
+const secret = new TextEncoder().encode(process.env.JWT_SECRET);
 
 export async function hashPassword(password: string) {
   return bcrypt.hash(password, 12);

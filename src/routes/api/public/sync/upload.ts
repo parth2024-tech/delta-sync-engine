@@ -35,6 +35,33 @@ const metaSchema = z.object({
   ops:           z.array(opSchema),
 });
 
+import { PassThrough } from "node:stream";
+import crypto from "node:crypto";
+import { Upload } from "@aws-sdk/lib-storage";
+import { S3Client, CopyObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
+
+const s3 = new S3Client({
+  region: process.env.S3_REGION || "auto",
+  endpoint: process.env.S3_ENDPOINT,
+  credentials: {
+    accessKeyId: process.env.S3_ACCESS_KEY_ID || "dev",
+    secretAccessKey: process.env.S3_SECRET_ACCESS_KEY || "dev",
+  },
+});
+const BUCKET_NAME = process.env.S3_BUCKET_NAME || "deltasync-blocks";
+
+const rateLimits = new Map<string, { count: number, resetAt: number }>();
+function checkRateLimit(userId: string) {
+  const now = Date.now();
+  let limit = rateLimits.get(userId);
+  if (!limit || limit.resetAt < now) {
+    limit = { count: 0, resetAt: now + 60000 };
+    rateLimits.set(userId, limit);
+  }
+  limit.count++;
+  return limit.count <= 60;
+}
+
 export const Route = createFileRoute("/api/public/sync/upload")({
   server: {
     handlers: {
@@ -42,7 +69,15 @@ export const Route = createFileRoute("/api/public/sync/upload")({
         const userId = await validateApiKey(request.headers.get("Authorization"));
         if (!userId) return json({ error: "Unauthorized" }, 401);
 
-        // ── parse multipart ──────────────────────────────────────────────────
+        if (!checkRateLimit(userId)) {
+          return json({ error: "Rate limit exceeded" }, 429);
+        }
+
+        const contentLength = parseInt(request.headers.get("content-length") || "0", 10);
+        if (contentLength > 500 * 1024 * 1024) { // 500MB size limit
+          return json({ error: "Payload too large" }, 413);
+        }
+
         let formData: FormData;
         try { formData = await request.formData(); }
         catch { return json({ error: "Expected multipart/form-data" }, 400); }
@@ -55,25 +90,14 @@ export const Route = createFileRoute("/api/public/sync/upload")({
         catch (e) { return json({ error: "Invalid meta: " + String(e) }, 400); }
 
         const literalsEntry = formData.get("literals");
-        const literalBytes  = literalsEntry instanceof Blob
-          ? new Uint8Array(await literalsEntry.arrayBuffer())
-          : new Uint8Array(0);
-
-        // ── validate literal byte ranges ─────────────────────────────────────
-        for (const op of meta.ops) {
-          if (op.type === "literal") {
-            const end = op.literalOffset + op.literalLength;
-            if (end > literalBytes.length) {
-              return json({ error: `Literal op references bytes [${op.literalOffset},${end}) but literals blob is ${literalBytes.length} bytes` }, 400);
-            }
-          }
+        if (literalsEntry && !(literalsEntry instanceof Blob)) {
+          return json({ error: "Invalid literals" }, 400);
         }
 
-        // ── load existing version's blocks for copy ops ──────────────────────
         const [existingFile] = await db.select().from(files)
           .where(and(eq(files.userId, userId), eq(files.path, meta.path)));
 
-        const prevBlockMap = new Map<number, string>(); // blockIndex → strongHash
+        const prevBlockMap = new Map<number, string>();
 
         if (existingFile?.currentVersionId) {
           const prevBlocks = await db
@@ -83,41 +107,97 @@ export const Route = createFileRoute("/api/public/sync/upload")({
           for (const b of prevBlocks) prevBlockMap.set(b.blockIndex, b.strongHash);
         }
 
-        // ── validate copy ops reference known blocks ─────────────────────────
         for (const op of meta.ops) {
           if (op.type === "copy" && !prevBlockMap.has(op.blockIndex)) {
             return json({ error: `Copy op references unknown block ${op.blockIndex}` }, 400);
           }
         }
 
-        // ── build per-op resolved data ────────────────────────────────────────
         type Resolved =
           | { kind: "copy";    strongHash: string }
-          | { kind: "literal"; bytes: Uint8Array; strongHash: string; weakHash: number };
+          | { kind: "literal"; strongHash: string; weakHash: number };
 
         const resolved: Resolved[] = [];
         let bytesTransferred = 0;
 
-        for (const op of meta.ops) {
-          if (op.type === "copy") {
-            resolved.push({ kind: "copy", strongHash: prevBlockMap.get(op.blockIndex)! });
-          } else {
-            const chunk = literalBytes.subarray(op.literalOffset, op.literalOffset + op.literalLength);
-            const strongHash = await sha256Hex(chunk);
-            const weakHash   = adler32(chunk);
-            bytesTransferred += chunk.length;
-            resolved.push({ kind: "literal", bytes: chunk, strongHash, weakHash });
+        if (literalsEntry instanceof Blob) {
+          const stream = literalsEntry.stream();
+          const reader = stream.getReader();
+          let currentChunk = new Uint8Array(0);
+
+          for (const op of meta.ops) {
+            if (op.type === "copy") {
+              resolved.push({ kind: "copy", strongHash: prevBlockMap.get(op.blockIndex)! });
+            } else {
+              const length = op.literalLength;
+              const passThrough = new PassThrough();
+              const tempKey = `temp-${crypto.randomUUID()}`;
+              
+              const upload = new Upload({
+                client: s3,
+                params: { Bucket: BUCKET_NAME, Key: tempKey, Body: passThrough }
+              });
+              const uploadPromise = upload.done();
+              
+              const hashObj = crypto.createHash("sha256");
+              let weakA = 1, weakB = 0;
+              const MOD_ADLER = 65521;
+              
+              let remaining = length;
+              while (remaining > 0) {
+                if (currentChunk.length === 0) {
+                  const { done, value } = await reader.read();
+                  if (done) throw new Error("Unexpected end of stream");
+                  currentChunk = value;
+                }
+                
+                const take = Math.min(remaining, currentChunk.length);
+                const slice = currentChunk.subarray(0, take);
+                
+                passThrough.write(slice);
+                hashObj.update(slice);
+                
+                for (let i = 0; i < slice.length; i++) {
+                  weakA = (weakA + slice[i]) % MOD_ADLER;
+                  weakB = (weakB + weakA) % MOD_ADLER;
+                }
+                
+                remaining -= take;
+                bytesTransferred += take;
+                currentChunk = currentChunk.subarray(take);
+              }
+              passThrough.end();
+              await uploadPromise;
+              
+              const strongHash = hashObj.digest("hex");
+              const weakHash = ((weakB << 16) | weakA) >>> 0;
+              
+              try {
+                await s3.send(new CopyObjectCommand({
+                  Bucket: BUCKET_NAME,
+                  CopySource: `${BUCKET_NAME}/${tempKey}`,
+                  Key: strongHash
+                }));
+              } catch (e) {
+                // If it already exists or copy fails, we still delete temp
+              }
+              await s3.send(new DeleteObjectCommand({
+                Bucket: BUCKET_NAME,
+                Key: tempKey
+              }));
+              
+              resolved.push({ kind: "literal", strongHash, weakHash });
+            }
+          }
+        } else {
+          for (const op of meta.ops) {
+            if (op.type === "copy") {
+              resolved.push({ kind: "copy", strongHash: prevBlockMap.get(op.blockIndex)! });
+            }
           }
         }
 
         const bytesSaved = Math.max(0, meta.newSize - bytesTransferred);
-
-        // ── Phase 1: store literal blocks in content-addressed block store ───
-        for (const r of resolved) {
-          if (r.kind === "literal") {
-            await storeBlock(r.strongHash, r.bytes);
-          }
-        }
 
         // ── persist to DB in a single transaction ────────────────────────────
         let returnVal = { versionNo: 0, bytesSaved };
@@ -148,14 +228,18 @@ export const Route = createFileRoute("/api/public/sync/upload")({
             contentSha256: meta.contentSha256,
           }).returning();
 
-          for (let i = 0; i < resolved.length; i++) {
-            const r = resolved[i];
-            await tx.insert(blocks).values({
-              versionId:  version.id,
-              blockIndex: i,
-              weakHash:   r.kind === "literal" ? r.weakHash : 0,
+          const chunkSize = 500;
+          for (let i = 0; i < resolved.length; i += chunkSize) {
+            const chunk = resolved.slice(i, i + chunkSize);
+            const values = chunk.map((r, idx) => ({
+              versionId: version.id,
+              blockIndex: i + idx,
+              weakHash: r.kind === "literal" ? r.weakHash : 0,
               strongHash: r.strongHash,
-            });
+            }));
+            if (values.length > 0) {
+              await tx.insert(blocks).values(values);
+            }
           }
 
           await tx.update(files)
