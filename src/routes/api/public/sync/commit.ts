@@ -1,0 +1,251 @@
+/**
+ * Upload Commit — Phase 2 of the two-phase upload handshake.
+ *
+ * After the client has uploaded all missing chunks directly to S3 via
+ * pre-signed URLs, it calls this endpoint to finalize the file version.
+ *
+ * This endpoint:
+ *   1. Validates the negotiation token from Redis
+ *   2. Verifies all required chunks exist in S3
+ *   3. Atomically creates the file_versions record with chunk_manifest
+ *   4. Emits a FILE_VERSION_CREATED event to the outbox table
+ *   5. Responds instantly — no binary data flows through the server
+ */
+
+import { createFileRoute } from "@tanstack/react-router";
+import type {} from "@tanstack/react-start";
+import { validateApiKey } from "@/lib/api-key-auth";
+import { db } from "../../../../../server/db";
+import { files, fileVersions, syncJobs, outboxEvents } from "../../../../../shared/schema";
+import { encodeChunkManifestV1 } from "../../../../../shared/chunk-manifest";
+import { max, eq, and, sql } from "drizzle-orm";
+import { z } from "zod";
+
+import {
+  S3Client,
+  HeadObjectCommand,
+} from "@aws-sdk/client-s3";
+import { createS3Limiter } from "../../../../../server/s3-limiter";
+
+import Redis from "ioredis";
+
+const redis = new Redis(process.env.REDIS_URL || "redis://localhost:6379");
+
+const s3 = new S3Client({
+  region: process.env.S3_REGION || "auto",
+  endpoint: process.env.S3_ENDPOINT,
+  credentials: {
+    accessKeyId: process.env.S3_ACCESS_KEY_ID || "dev",
+    secretAccessKey: process.env.S3_SECRET_ACCESS_KEY || "dev",
+  },
+});
+const BUCKET_NAME = process.env.S3_BUCKET_NAME || "deltasync-blocks";
+
+const s3Limited = createS3Limiter(
+  Math.max(1, Math.min(32, parseInt(process.env.S3_UPLOAD_CONCURRENCY || "12", 10) || 12)),
+);
+
+const commitSchema = z.object({
+  negotiationId: z.string().uuid(),
+});
+
+async function blockExists(key: string): Promise<boolean> {
+  try {
+    await s3Limited(() =>
+      s3.send(new HeadObjectCommand({ Bucket: BUCKET_NAME, Key: key })),
+    );
+    return true;
+  } catch (e: unknown) {
+    const name = (e as { name?: string })?.name;
+    const code = (e as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode;
+    if (name === "NotFound" || code === 404) return false;
+    throw e;
+  }
+}
+
+interface NegotiationPayload {
+  userId: string;
+  path: string;
+  chunking: "cdc" | "fixed";
+  blockSize: number;
+  newSize: number;
+  contentSha256: string;
+  chunks: { strongHash: string; length: number; weakHash?: number }[];
+  snapshotCurrentVersionId: string | null;
+}
+
+export const Route = createFileRoute("/api/public/sync/commit")({
+  server: {
+    handlers: {
+      POST: async ({ request }) => {
+        const userId = await validateApiKey(request.headers.get("Authorization"));
+        if (!userId) return json({ error: "Unauthorized" }, 401);
+
+        let body: z.infer<typeof commitSchema>;
+        try {
+          body = commitSchema.parse(await request.json());
+        } catch (e) {
+          return json({ error: "Invalid request: " + String(e) }, 400);
+        }
+
+        // Retrieve and consume the negotiation token (one-time use)
+        const negotiationData = await redis.get(`negotiate:${body.negotiationId}`);
+        if (!negotiationData) {
+          return json({ error: "Negotiation expired or invalid" }, 410);
+        }
+        await redis.del(`negotiate:${body.negotiationId}`);
+
+        let negotiation: NegotiationPayload;
+        try {
+          negotiation = JSON.parse(negotiationData);
+        } catch {
+          return json({ error: "Corrupted negotiation data" }, 500);
+        }
+
+        // Verify the authenticated user matches the negotiation
+        if (negotiation.userId !== userId) {
+          return json({ error: "User mismatch" }, 403);
+        }
+
+        // Spot-check: verify a sample of chunks exist in S3
+        const uniqueHashes = [...new Set(negotiation.chunks.map((c) => c.strongHash))];
+        const SPOT_CHECK_COUNT = Math.min(10, uniqueHashes.length);
+        const spotCheckHashes = uniqueHashes
+          .sort(() => Math.random() - 0.5)
+          .slice(0, SPOT_CHECK_COUNT);
+
+        const spotResults = await Promise.all(
+          spotCheckHashes.map(async (hash) => ({
+            hash,
+            exists: await blockExists(hash),
+          })),
+        );
+
+        const missingInSpot = spotResults.filter((r) => !r.exists);
+        if (missingInSpot.length > 0) {
+          return json({
+            error: "Some chunks have not been uploaded yet",
+            missing: missingInSpot.map((r) => r.hash),
+          }, 409);
+        }
+
+        // Build the chunk manifest
+        type ManifestRow = { offset: number; length: number; weakHash: number; strongHashHex: string };
+        const manifestRows: ManifestRow[] = [];
+        let runningOffset = 0;
+
+        for (const chunk of negotiation.chunks) {
+          manifestRows.push({
+            offset: runningOffset,
+            length: chunk.length,
+            weakHash: chunk.weakHash ?? 0,
+            strongHashHex: chunk.strongHash,
+          });
+          runningOffset += chunk.length;
+        }
+
+        if (runningOffset !== negotiation.newSize) {
+          return json({
+            error: `Reconstructed size ${runningOffset} does not match newSize ${negotiation.newSize}`,
+          }, 400);
+        }
+
+        // Calculate bytes saved (chunks reused from previous version)
+        const bytesTransferred = negotiation.chunks.reduce((sum, c) => sum + c.length, 0);
+        const bytesSaved = Math.max(0, negotiation.newSize - bytesTransferred);
+
+        let returnVal = { versionNo: 0, bytesSaved };
+
+        try {
+          await db.transaction(async (tx) => {
+            // Advisory lock to prevent concurrent writes to the same file
+            const lockKey = `${userId}:${negotiation.path}`;
+            await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${lockKey}::text))`);
+
+            // Optimistic concurrency check
+            const [ef] = await tx.select().from(files)
+              .where(and(eq(files.userId, userId), eq(files.path, negotiation.path)));
+
+            if ((ef?.currentVersionId ?? null) !== negotiation.snapshotCurrentVersionId) {
+              throw Object.assign(new Error("stale_remote"), { code: "STALE" });
+            }
+
+            let fileId: string;
+            if (ef) {
+              fileId = ef.id;
+            } else {
+              const [f] = await tx.insert(files)
+                .values({ userId, path: negotiation.path, totalSize: negotiation.newSize })
+                .returning();
+              fileId = f.id;
+            }
+
+            const [{ maxVer }] = await tx
+              .select({ maxVer: max(fileVersions.versionNo) })
+              .from(fileVersions)
+              .where(eq(fileVersions.fileId, fileId));
+            const nextVer = (maxVer ?? 0) + 1;
+
+            const packed = encodeChunkManifestV1(manifestRows);
+
+            const [version] = await tx.insert(fileVersions).values({
+              fileId,
+              versionNo: nextVer,
+              size: negotiation.newSize,
+              totalBlocks: manifestRows.length,
+              blockSize: negotiation.blockSize,
+              chunkManifest: packed,
+              chunkingMode: negotiation.chunking,
+              contentSha256: negotiation.contentSha256,
+            }).returning();
+
+            await tx.update(files)
+              .set({ currentVersionId: version.id, totalSize: negotiation.newSize })
+              .where(eq(files.id, fileId));
+
+            await tx.insert(syncJobs).values({
+              userId, fileId, direction: "push",
+              bytesTransferred, bytesSaved, status: "done",
+              finishedAt: new Date(),
+            });
+
+            // Step 3: Transactional Outbox — emit event atomically with the version record
+            await tx.insert(outboxEvents).values({
+              eventType: "FILE_VERSION_CREATED",
+              aggregateId: version.id,
+              payload: JSON.stringify({
+                userId,
+                fileId,
+                versionId: version.id,
+                versionNo: nextVer,
+                path: negotiation.path,
+                size: negotiation.newSize,
+                totalBlocks: manifestRows.length,
+                contentSha256: negotiation.contentSha256,
+              }),
+            });
+
+            returnVal = { versionNo: nextVer, bytesSaved };
+          });
+        } catch (err: unknown) {
+          if (err && typeof err === "object" && (err as { code?: string }).code === "STALE") {
+            return json({ error: "Remote file changed during upload. Pull latest and retry." }, 409);
+          }
+          if ((err as { code?: string })?.code === "23505") {
+            return json({ error: "Concurrent sync conflict. Please pull and retry." }, 409);
+          }
+          throw err;
+        }
+
+        return json(returnVal);
+      },
+    },
+  },
+});
+
+function json(data: unknown, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}

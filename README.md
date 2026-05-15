@@ -7,14 +7,15 @@ Deltasync is a high-performance delta-based file synchronization engine. It uses
 ## 🚀 Key Features & Production Architecture
 
 *   **Rsync Algorithm Implementation**: Uses a two-level match (Adler-32 + SHA-256) to perform rolling hash block deduplication. Hashes are fully unit-tested via Vitest to guarantee zero false positives.
+*   **Zero-Copy Native FFI (NAPI-RS + Rayon)**: CDC chunking, Adler-32, and SHA-256 hashing are offloaded to a Rust native addon via NAPI-RS. Computation runs on Rayon's thread pool, keeping the Node.js event loop 100% unblocked. Falls back gracefully to TypeScript if the native binary isn't compiled.
+*   **Pre-Signed Upload Architecture**: Two-phase upload handshake — clients hash locally, negotiate with the server, then upload missing chunks directly to S3 via pre-signed URLs. The server's network interface is completely bypassed for binary data.
+*   **Transactional Outbox Pattern**: Events (e.g., `FILE_VERSION_CREATED`) are emitted atomically within DB transactions. A background dispatcher polls the outbox and feeds BullMQ, guaranteeing at-least-once delivery without distributed transactions.
+*   **Offline Garbage Collection**: GC builds a compressed hash set from DB manifests, then reconciles against S3 Inventory Reports (or ListObjectsV2). Zero database load during S3 reconciliation.
+*   **FlatBuffer Wire Format (DSO2)**: Zero-copy binary manifest codec. Operations are read directly from the buffer at computed offsets — no JSON parsing, no memory allocation. Backward compatible with DSO1 and JSON formats.
 *   **Infrastructure as Code (IaC)**: Includes a Terraform definition (`infrastructure/main.tf`) to reproducibly provision S3 buckets (with SSE-KMS encryption), ECS clusters, and RDS PostgreSQL databases.
 *   **Containerized Compute Layer**: Ready-to-deploy multistage `Dockerfile` specifically optimized for the Bun/Vite/TanStack environment.
 *   **Automated CI/CD Pipeline**: GitHub Actions workflow automatically spins up testing services (PostgreSQL/Redis), runs Vitest suites, builds the Docker image, and triggers blue/green deployments to AWS ECS.
-*   **Decoupled Asynchronous Workers**: Uses **BullMQ** running on a separate container (`server/worker.ts`) to handle heavy background processing, isolating compute-intensive tasks from the HTTP API.
-*   **Streaming Multipart Uploads**: Eliminates in-memory buffering. Literal block byte chunks are piped directly to S3 as a stream (`PassThrough` + `@aws-sdk/lib-storage`), preventing OOM crashes on massive files.
-*   **Database Transaction Scaling**: Array-based batch inserts via Drizzle ORM (chunked into 500 records) eliminate N+1 query bottlenecks. Uses optimistic locking to gracefully handle concurrent sync race conditions (PostgreSQL 23505 unique constraints).
 *   **Distributed Rate Limiting**: Centralized Redis-backed rate limiter (`ioredis`) restricts clients to 60 requests/minute consistently across a multi-node fleet.
-*   **Automated Garbage Collection & Maintenance**: Includes dedicated cron scripts (`server/gc.ts` & `server/cleanup.ts`) to continuously purge orphaned S3 blobs and prune stale `sync_jobs` logs older than 30 days.
 *   **Security Hardening**:
     *   Strict `JWT_SECRET` requirement (halts startup if missing).
     *   Zod-level logical path traversal prevention (`../`, `./`, `/`).
@@ -26,9 +27,11 @@ Deltasync is a high-performance delta-based file synchronization engine. It uses
 *   **Frontend**: React 19, Tailwind CSS 4, Radix UI
 *   **Framework/Routing**: TanStack Start & TanStack Router
 *   **Backend Runtime**: Node.js (Vite Dev Server)
+*   **Native Layer**: Rust (NAPI-RS + Rayon thread pool)
 *   **Database**: PostgreSQL, Drizzle ORM
 *   **Storage**: S3-Compatible Object Storage (`@aws-sdk/client-s3`)
 *   **Message Queue**: Redis & BullMQ
+*   **Wire Format**: FlatBuffer-style DSO2 binary protocol
 *   **Testing**: Vitest
 *   **Infrastructure**: Docker, Terraform, GitHub Actions
 
@@ -38,6 +41,7 @@ Deltasync is a high-performance delta-based file synchronization engine. It uses
 *   PostgreSQL running locally or remotely
 *   Redis server (for Rate Limiting and BullMQ)
 *   An S3-compatible object storage bucket
+*   Rust toolchain (for native addon compilation — optional, has TS fallback)
 
 ## ⚙️ Installation & Setup
 
@@ -52,7 +56,15 @@ Deltasync is a high-performance delta-based file synchronization engine. It uses
     npm install
     ```
 
-3.  **Configure Environment Variables:**
+3.  **Build the native addon (optional, recommended):**
+    ```bash
+    cd native
+    cargo build --release
+    # The NAPI-RS addon will be at native/deltasync-native.node
+    # If skipped, the server uses a TypeScript fallback automatically.
+    ```
+
+4.  **Configure Environment Variables:**
     Create a `.env` file in the root directory:
     ```env
     # Database Configuration
@@ -70,25 +82,36 @@ Deltasync is a high-performance delta-based file synchronization engine. It uses
     S3_ACCESS_KEY_ID=your_access_key
     S3_SECRET_ACCESS_KEY=your_secret_key
     S3_BUCKET_NAME=deltasync-blocks
+    S3_UPLOAD_CONCURRENCY=12
+
+    # S3 Inventory (for offline GC — optional)
+    S3_INVENTORY_BUCKET=
+    S3_INVENTORY_KEY=
+
+    # Outbox Dispatcher
+    OUTBOX_POLL_MS=2000
 
     # Observability
     LOG_LEVEL=info
     NODE_ENV=development
     ```
 
-4.  **Run Database Migrations:**
+5.  **Run Database Migrations:**
     ```bash
     npx drizzle-kit push
     ```
 
-5.  **Start the Development Services:**
+6.  **Start the Development Services:**
     You'll need multiple terminal tabs for full functionality:
     ```bash
     # Tab 1: Main API Server
     npm run dev
-    
-    # Tab 2: BullMQ Background Worker
-    npx tsx server/worker.ts
+
+    # Tab 2: Outbox Event Dispatcher
+    npx tsx --env-file=.env server/outbox-dispatcher.ts
+
+    # Tab 3: BullMQ Background Worker
+    npx tsx --env-file=.env server/worker.ts
     ```
     The application will be available at `http://localhost:5000/`.
 
@@ -101,7 +124,20 @@ Deltasync is a high-performance delta-based file synchronization engine. It uses
     *   Otherwise, the leftmost byte drops out of the window and joins a `LITERAL` run.
 4.  **Stream the Delta**: Only the `LITERAL` runs are transferred over the wire. The server then replays the `COPY` and `LITERAL` ops against the object storage blocks to reconstruct the new file version.
 
+## 📡 Upload Architecture (v2 — Pre-Signed)
+
+The v2 upload flow eliminates binary data routing through the API server:
+
+1.  **Negotiate** (`POST /api/public/sync/negotiate`): Client sends chunk hashes → server returns pre-signed S3 PUT URLs for missing chunks.
+2.  **Upload**: Client uploads binary data directly to S3 via pre-signed URLs. Server bandwidth is zero.
+3.  **Commit** (`POST /api/public/sync/commit`): Client confirms upload → server atomically creates the file version + outbox event.
+
+The legacy `POST /api/public/sync/upload` endpoint remains for backward compatibility.
+
 ## 🛡️ Architecture Highlights
 
 *   **Content-Addressed Storage**: Blocks are stored and keyed strictly by their SHA-256 hash. Identical blocks across different files or users are inherently deduplicated (O(1) storage cost for identical blocks).
-*   **Streaming S3 PassThrough**: Literal uploads are streamed immediately from the incoming request body through a `PassThrough` stream directly into the S3 bucket. Adler-32 and SHA-256 hashes are computed incrementally in-flight, meaning massive files can be uploaded without ever touching the local disk or blowing up application memory.
+*   **Zero-Copy Native Hashing**: Adler-32 and SHA-256 are computed in Rust via NAPI-RS, using Rayon for parallel multi-core processing. No JavaScript byte loops.
+*   **Event-Driven Workers**: The transactional outbox guarantees that background jobs (chunk verification, GC, future RAG indexing) are never lost, even if Redis is temporarily unavailable.
+*   **FlatBuffer Manifests**: Operation manifests use a zero-copy binary format (DSO2) where fields are read at computed offsets — 100MB manifests are usable with zero CPU parsing overhead.
+*   **Offline GC**: Garbage collection uses compressed hash sets and S3 Inventory Reports, keeping the transactional database at zero load during reconciliation.

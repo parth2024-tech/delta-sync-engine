@@ -1,17 +1,41 @@
 [package]
 name = "deltasync-native"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-description = "Native-speed file hashing and CDC chunking for deltasync (companion to the Node CLI)"
+description = "Zero-copy async NAPI-RS bindings for CDC chunking, Adler-32, and SHA-256 hashing"
 
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+# Keep the CLI binary for standalone benchmarking
 [[bin]]
 name = "deltasync-native"
 path = "src/main.rs"
 
 [dependencies]
-clap = { version = "4.5", features = ["derive"] }
-memmap2 = "0.9"
+# NAPI-RS for zero-copy Node.js FFI
+napi = { version = "2", features = ["napi6", "async", "serde-json"] }
+napi-derive = "2"
+
+# Cryptography
 sha2 = "0.10"
 hex = "0.4"
+
+# Parallel processing
+rayon = "1.10"
+
+# CLI binary deps (only used by the bin target)
+clap = { version = "4.5", features = ["derive"] }
+memmap2 = "0.9"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+
+[build-dependencies]
+napi-build = "2"
+
+[profile.release]
+lto = true
+opt-level = 3
+codegen-units = 1
+strip = "symbols"

@@ -123,10 +123,50 @@ export const apiKeysRelations = relations(apiKeys, ({ one }) => ({
   user: one(users, { fields: [apiKeys.userId], references: [users.id] }),
 }));
 
-export type User        = typeof users.$inferSelect;
-export type InsertUser  = typeof users.$inferInsert;
-export type File        = typeof files.$inferSelect;
-export type FileVersion = typeof fileVersions.$inferSelect;
-export type Block       = typeof blocks.$inferSelect;
-export type SyncJob     = typeof syncJobs.$inferSelect;
-export type ApiKey      = typeof apiKeys.$inferSelect;
+// ── Transactional Outbox (Step 3: Event-Driven Architecture) ──────────────────
+
+/**
+ * Outbox events table — implements the Transactional Outbox Pattern.
+ *
+ * Events are inserted atomically within the same DB transaction as the
+ * business operation (e.g., creating a file_version). A background
+ * dispatcher polls this table, dispatches to BullMQ, and marks as processed.
+ *
+ * Event types:
+ *   - FILE_VERSION_CREATED — triggers chunk verification, indexing, etc.
+ *   - FILE_DELETED — triggers S3 cleanup
+ *   - GC_REQUESTED — triggers garbage collection run
+ */
+export const outboxEvents = pgTable("outbox_events", {
+  id:          text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  eventType:   text("event_type").notNull().$type<
+    "FILE_VERSION_CREATED" | "FILE_DELETED" | "GC_REQUESTED" | "CHUNK_VERIFICATION"
+  >(),
+  aggregateId: text("aggregate_id").notNull(),
+  payload:     text("payload").notNull(), // JSON-encoded event data
+  processedAt: timestamp("processed_at"),
+  createdAt:   timestamp("created_at").defaultNow().notNull(),
+}, (t) => [
+  index("outbox_events_unprocessed_idx").on(t.processedAt, t.createdAt),
+]);
+
+// ── GC Runs Tracking (Step 4: Offline GC History) ─────────────────────────────
+
+export const gcRuns = pgTable("gc_runs", {
+  id:           text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
+  status:       text("status").notNull().default("running").$type<"running" | "completed" | "failed">(),
+  deletedCount: integer("deleted_count").notNull().default(0),
+  error:        text("error"),
+  startedAt:    timestamp("started_at").defaultNow().notNull(),
+  finishedAt:   timestamp("finished_at"),
+});
+
+export type User         = typeof users.$inferSelect;
+export type InsertUser   = typeof users.$inferInsert;
+export type File         = typeof files.$inferSelect;
+export type FileVersion  = typeof fileVersions.$inferSelect;
+export type Block        = typeof blocks.$inferSelect;
+export type SyncJob      = typeof syncJobs.$inferSelect;
+export type ApiKey       = typeof apiKeys.$inferSelect;
+export type OutboxEvent  = typeof outboxEvents.$inferSelect;
+export type GcRun        = typeof gcRuns.$inferSelect;

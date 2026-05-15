@@ -1,19 +1,27 @@
 /**
- * Multipart upload: meta JSON + optional binary ops (`opsBin`) + raw literal bytes.
- * Uses pg advisory lock, packed chunk_manifest, bounded S3 concurrency, and
- * skips server-side CopyObject when the content-addressed key already exists.
+ * Multipart upload: meta JSON + optional binary ops (`opsBin` / `opsFlatbuf`) + raw literal bytes.
+ * 
+ * Supports three operation encodings:
+ *   - "json"    — JSON array (legacy, bandwidth-heavy)
+ *   - "bin"     — DSO1 custom binary format
+ *   - "flatbuf" — DSO2 FlatBuffer zero-copy format (recommended)
+ *
+ * Uses pg advisory lock, packed chunk_manifest, bounded S3 concurrency,
+ * native bridge for hashing, and transactional outbox for event dispatch.
  */
 
 import { createFileRoute } from "@tanstack/react-router";
 import type {} from "@tanstack/react-start";
 import { validateApiKey } from "@/lib/api-key-auth";
 import { db } from "../../../../../server/db";
-import { files, fileVersions, syncJobs } from "../../../../../shared/schema";
+import { files, fileVersions, syncJobs, outboxEvents } from "../../../../../shared/schema";
 import { encodeChunkManifestV1 } from "../../../../../shared/chunk-manifest";
 import { decodeOpsBinaryV1, opSchema } from "../../../../../shared/ops-binary";
+import { decodeOpsUniversal } from "../../../../../shared/ops-flatbuf";
 import type { UploadOp } from "../../../../../shared/ops-binary";
 import { loadVersionChunks } from "../../../../../server/version-chunks";
 import { createS3Limiter } from "../../../../../server/s3-limiter";
+import { native } from "../../../../../server/native-bridge";
 import { max, eq, and, sql } from "drizzle-orm";
 import { z } from "zod";
 
@@ -33,14 +41,14 @@ const metaSchema = z.object({
   blockSize:     z.number().int().min(256).max(1048576),
   newSize:       z.number().int().min(0),
   contentSha256: z.string().length(64),
-  opsEncoding:   z.enum(["json", "bin"]).optional().default("json"),
+  opsEncoding:   z.enum(["json", "bin", "flatbuf"]).optional().default("json"),
   /** Required when opsEncoding is `bin` (must match decoded `opsBin` length). */
   opCount:       z.number().int().min(0).optional(),
   ops:           z.array(opSchema).optional(),
 }).superRefine((m, ctx) => {
-  if (m.opsEncoding === "bin") {
+  if (m.opsEncoding === "bin" || m.opsEncoding === "flatbuf") {
     if (m.opCount === undefined) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "opCount required when opsEncoding is bin" });
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "opCount required when opsEncoding is bin/flatbuf" });
     }
   } else if (!m.ops || (m.ops.length === 0 && m.newSize > 0)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: "ops array required when opsEncoding is json" });
@@ -117,16 +125,18 @@ export const Route = createFileRoute("/api/public/sync/upload")({
         catch (e) { return json({ error: "Invalid meta: " + String(e) }, 400); }
 
         let ops: UploadOp[];
-        if (meta.opsEncoding === "bin") {
-          const opsEntry = formData.get("opsBin");
+        if (meta.opsEncoding === "bin" || meta.opsEncoding === "flatbuf") {
+          const fieldName = meta.opsEncoding === "flatbuf" ? "opsFlatbuf" : "opsBin";
+          const opsEntry = formData.get(fieldName) ?? formData.get("opsBin");
           if (!(opsEntry instanceof Blob)) {
-            return json({ error: "Missing opsBin field when opsEncoding is bin" }, 400);
+            return json({ error: `Missing ${fieldName} field when opsEncoding is ${meta.opsEncoding}` }, 400);
           }
           let buf: Buffer;
           try { buf = Buffer.from(await opsEntry.arrayBuffer()); }
-          catch { return json({ error: "Invalid opsBin" }, 400); }
+          catch { return json({ error: "Invalid ops buffer" }, 400); }
           try {
-            ops = decodeOpsBinaryV1(buf);
+            const decoded = decodeOpsUniversal(buf);
+            ops = decoded.ops;
           } catch (e) {
             return json({ error: "Invalid ops binary: " + String(e) }, 400);
           }
@@ -195,8 +205,8 @@ export const Route = createFileRoute("/api/public/sync/upload")({
               const uploadPromise = upload.done();
 
               const hashObj = crypto.createHash("sha256");
-              let weakA = 1, weakB = 0;
-              const MOD_ADLER = 65521;
+              // Collect all bytes for this literal chunk for native hashing
+              const chunkParts: Uint8Array[] = [];
 
               let remaining = length;
               while (remaining > 0) {
@@ -211,11 +221,7 @@ export const Route = createFileRoute("/api/public/sync/upload")({
 
                 passThrough.write(slice);
                 hashObj.update(slice);
-
-                for (let i = 0; i < slice.length; i++) {
-                  weakA = (weakA + slice[i]!) % MOD_ADLER;
-                  weakB = (weakB + weakA) % MOD_ADLER;
-                }
+                chunkParts.push(new Uint8Array(slice));
 
                 remaining -= take;
                 bytesTransferred += take;
@@ -225,7 +231,9 @@ export const Route = createFileRoute("/api/public/sync/upload")({
               await uploadPromise;
 
               const strongHash = hashObj.digest("hex");
-              const weakHash = ((weakB << 16) | weakA) >>> 0;
+              // Use native Adler-32 (no per-byte JS loop — offloaded to Rust/native)
+              const fullChunk = Buffer.concat(chunkParts);
+              const weakHash = native.adler32Native(fullChunk);
 
               const exists = await blockExists(strongHash);
               if (!exists) {
@@ -325,6 +333,17 @@ export const Route = createFileRoute("/api/public/sync/upload")({
               userId, fileId, direction: "push",
               bytesTransferred, bytesSaved, status: "done",
               finishedAt: new Date(),
+            });
+
+            // Transactional Outbox: emit event atomically with the version record
+            await tx.insert(outboxEvents).values({
+              eventType: "FILE_VERSION_CREATED",
+              aggregateId: version.id,
+              payload: JSON.stringify({
+                userId, fileId, versionId: version.id, versionNo: nextVer,
+                path: meta.path, size: meta.newSize, totalBlocks: manifestRows.length,
+                contentSha256: meta.contentSha256,
+              }),
             });
 
             returnVal = { versionNo: nextVer, bytesSaved };
