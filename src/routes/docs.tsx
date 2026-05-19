@@ -38,12 +38,12 @@ function Docs() {
           <section>
             <h2 className="font-display text-xl font-semibold text-foreground">2. Rolling Adler-32</h2>
             <p>
-              Adler-32 of window <code className="text-primary">[i, i+B)</code> can be updated in O(1) when the window
+              Adler-32 of window <code className="text-primary">[i, i+W)</code> can be updated in O(1) when the window
               slides one byte:
             </p>
             <pre className="overflow-x-auto rounded-md border border-border bg-background p-4 text-xs text-foreground">
-{`A' = (A − bytes[i] + bytes[i+B])     mod 65521
-B' = (B − B·bytes[i] + A' − 1)       mod 65521
+{`A' = (A − bytes[i] + bytes[i+W])     mod 65521
+B' = (B − W·bytes[i] + A' − 1)       mod 65521
 hash = (B' << 16) | A'`}
             </pre>
           </section>

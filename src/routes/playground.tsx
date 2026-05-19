@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { SiteHeader } from "@/components/site-header";
 import {
   computeSignatures,
@@ -86,6 +86,10 @@ function Playground() {
       setRunning(false);
     }
   }, [oldBytes, newBytes, blockSize]);
+
+  useEffect(() => {
+    run();
+  }, [run]);
 
   const loadFile = (which: "old" | "new") => async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
