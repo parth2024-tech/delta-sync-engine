@@ -1,0 +1,101 @@
+[
+  {
+    "strategy": "Full Re-upload (aws s3 sync)",
+    "workload": "Large Single File (100 MB, 1% change)",
+    "originalSize": 104857600,
+    "modifiedSize": 105906176,
+    "transferBytes": 105906176,
+    "timeMs": 205.71266199999997,
+    "peakMemMB": 0.321616,
+    "timeSavedPct": "0.0%",
+    "bwSavedPct": "0.0%"
+  },
+  {
+    "strategy": "rsync Fixed-Block (4 KiB)",
+    "workload": "Large Single File (100 MB, 1% change)",
+    "originalSize": 104857600,
+    "modifiedSize": 105906176,
+    "transferBytes": 1048576,
+    "timeMs": 67727.20911099999,
+    "peakMemMB": 18.483968,
+    "timeSavedPct": "-32823.2%",
+    "bwSavedPct": "99.0%"
+  },
+  {
+    "strategy": "Deltasync CDC (16 KiB avg)",
+    "workload": "Large Single File (100 MB, 1% change)",
+    "originalSize": 104857600,
+    "modifiedSize": 105906176,
+    "transferBytes": 1066360,
+    "timeMs": 3291.6166220000014,
+    "peakMemMB": 0,
+    "timeSavedPct": "-1500.1%",
+    "bwSavedPct": "99.0%"
+  },
+  {
+    "strategy": "Full Re-upload (aws s3 sync)",
+    "workload": "Many Small Files (1K × 10 KB, 5% changed)",
+    "originalSize": 10240000,
+    "modifiedSize": 10240000,
+    "transferBytes": 10240000,
+    "timeMs": 24.422957000002498,
+    "peakMemMB": 0,
+    "timeSavedPct": "0.0%",
+    "bwSavedPct": "0.0%"
+  },
+  {
+    "strategy": "rsync Fixed-Block (4 KiB)",
+    "workload": "Many Small Files (1K × 10 KB, 5% changed)",
+    "originalSize": 10240000,
+    "modifiedSize": 10240000,
+    "transferBytes": 643072,
+    "timeMs": 28330.483181999996,
+    "peakMemMB": 10.177104,
+    "timeSavedPct": "-115899.4%",
+    "bwSavedPct": "93.7%"
+  },
+  {
+    "strategy": "Deltasync CDC (16 KiB avg)",
+    "workload": "Many Small Files (1K × 10 KB, 5% changed)",
+    "originalSize": 10240000,
+    "modifiedSize": 10240000,
+    "transferBytes": 9996791,
+    "timeMs": 514.3958319999947,
+    "peakMemMB": 0,
+    "timeSavedPct": "-2006.2%",
+    "bwSavedPct": "2.4%"
+  },
+  {
+    "strategy": "Full Re-upload (aws s3 sync)",
+    "workload": "Mixed (50 MB + 500 × 10 KB)",
+    "originalSize": 57548800,
+    "modifiedSize": 58073088,
+    "transferBytes": 58073088,
+    "timeMs": 132.0960630000045,
+    "peakMemMB": 0,
+    "timeSavedPct": "0.0%",
+    "bwSavedPct": "0.0%"
+  },
+  {
+    "strategy": "rsync Fixed-Block (4 KiB)",
+    "workload": "Mixed (50 MB + 500 × 10 KB)",
+    "originalSize": 57548800,
+    "modifiedSize": 58073088,
+    "transferBytes": 950272,
+    "timeMs": 55044.703471,
+    "peakMemMB": 14.862056,
+    "timeSavedPct": "-41570.2%",
+    "bwSavedPct": "98.4%"
+  },
+  {
+    "strategy": "Deltasync CDC (16 KiB avg)",
+    "workload": "Mixed (50 MB + 500 × 10 KB)",
+    "originalSize": 57548800,
+    "modifiedSize": 58073088,
+    "transferBytes": 5450403,
+    "timeMs": 2062.86252699999,
+    "peakMemMB": 0,
+    "timeSavedPct": "-1461.6%",
+    "bwSavedPct": "90.6%"
+  }
+]
