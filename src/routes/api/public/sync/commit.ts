@@ -34,6 +34,7 @@ const redis = new Redis(process.env.REDIS_URL || "redis://localhost:6379");
 const s3 = new S3Client({
   region: process.env.S3_REGION || "auto",
   endpoint: process.env.S3_ENDPOINT,
+  forcePathStyle: true,
   credentials: {
     accessKeyId: process.env.S3_ACCESS_KEY_ID || "dev",
     secretAccessKey: process.env.S3_SECRET_ACCESS_KEY || "dev",

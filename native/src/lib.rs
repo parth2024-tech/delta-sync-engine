@@ -107,7 +107,7 @@ pub fn adler32_native(data: &[u8]) -> u32 {
 #[napi]
 pub async fn sha256_native(data: Buffer) -> Result<String> {
     let bytes: Vec<u8> = data.to_vec();
-    let (tx, rx) = tokio::sync::oneshot::channel();
+    let (tx, rx) = tokio::sync::oneshot::channel::<String>();
 
     rayon::spawn(move || {
         let result = sha256_hex(&bytes);
@@ -129,7 +129,7 @@ pub async fn cdc_chunk_and_hash(data: Buffer, avg_size: Option<u32>) -> Result<C
     let bytes: Vec<u8> = data.to_vec();
     let avg = avg_size.unwrap_or(16384) as usize;
 
-    let (tx, rx) = tokio::sync::oneshot::channel();
+    let (tx, rx) = tokio::sync::oneshot::channel::<CdcHashResult>();
 
     rayon::spawn(move || {
         // 1. Compute whole-file SHA-256
@@ -189,7 +189,7 @@ pub async fn hash_literal_chunks(
     let count = offsets.len();
     let pairs: Vec<(u32, u32)> = offsets.into_iter().zip(lengths).collect();
 
-    let (tx, rx) = tokio::sync::oneshot::channel();
+    let (tx, rx) = tokio::sync::oneshot::channel::<Vec<ChunkResult>>();
 
     rayon::spawn(move || {
         let results: Vec<ChunkResult> = (0..count)

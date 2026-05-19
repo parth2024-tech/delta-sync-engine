@@ -23,8 +23,10 @@ import { Route as AuthenticatedFilesIndexRouteImport } from './routes/_authentic
 import { Route as AuthenticatedFilesFileIdRouteImport } from './routes/_authenticated/files/$fileId'
 import { Route as ApiPublicSyncUploadRouteImport } from './routes/api/public/sync/upload'
 import { Route as ApiPublicSyncSignaturesRouteImport } from './routes/api/public/sync/signatures'
+import { Route as ApiPublicSyncNegotiateRouteImport } from './routes/api/public/sync/negotiate'
 import { Route as ApiPublicSyncFilesRouteImport } from './routes/api/public/sync/files'
 import { Route as ApiPublicSyncDownloadRouteImport } from './routes/api/public/sync/download'
+import { Route as ApiPublicSyncCommitRouteImport } from './routes/api/public/sync/commit'
 
 const SitemapDotxmlRoute = SitemapDotxmlRouteImport.update({
   id: '/sitemap.xml',
@@ -96,6 +98,11 @@ const ApiPublicSyncSignaturesRoute = ApiPublicSyncSignaturesRouteImport.update({
   path: '/api/public/sync/signatures',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicSyncNegotiateRoute = ApiPublicSyncNegotiateRouteImport.update({
+  id: '/api/public/sync/negotiate',
+  path: '/api/public/sync/negotiate',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiPublicSyncFilesRoute = ApiPublicSyncFilesRouteImport.update({
   id: '/api/public/sync/files',
   path: '/api/public/sync/files',
@@ -104,6 +111,11 @@ const ApiPublicSyncFilesRoute = ApiPublicSyncFilesRouteImport.update({
 const ApiPublicSyncDownloadRoute = ApiPublicSyncDownloadRouteImport.update({
   id: '/api/public/sync/download',
   path: '/api/public/sync/download',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiPublicSyncCommitRoute = ApiPublicSyncCommitRouteImport.update({
+  id: '/api/public/sync/commit',
+  path: '/api/public/sync/commit',
   getParentRoute: () => rootRouteImport,
 } as any)
 
@@ -119,8 +131,10 @@ export interface FileRoutesByFullPath {
   '/api/health': typeof ApiHealthRoute
   '/files/$fileId': typeof AuthenticatedFilesFileIdRoute
   '/files/': typeof AuthenticatedFilesIndexRoute
+  '/api/public/sync/commit': typeof ApiPublicSyncCommitRoute
   '/api/public/sync/download': typeof ApiPublicSyncDownloadRoute
   '/api/public/sync/files': typeof ApiPublicSyncFilesRoute
+  '/api/public/sync/negotiate': typeof ApiPublicSyncNegotiateRoute
   '/api/public/sync/signatures': typeof ApiPublicSyncSignaturesRoute
   '/api/public/sync/upload': typeof ApiPublicSyncUploadRoute
 }
@@ -136,8 +150,10 @@ export interface FileRoutesByTo {
   '/api/health': typeof ApiHealthRoute
   '/files/$fileId': typeof AuthenticatedFilesFileIdRoute
   '/files': typeof AuthenticatedFilesIndexRoute
+  '/api/public/sync/commit': typeof ApiPublicSyncCommitRoute
   '/api/public/sync/download': typeof ApiPublicSyncDownloadRoute
   '/api/public/sync/files': typeof ApiPublicSyncFilesRoute
+  '/api/public/sync/negotiate': typeof ApiPublicSyncNegotiateRoute
   '/api/public/sync/signatures': typeof ApiPublicSyncSignaturesRoute
   '/api/public/sync/upload': typeof ApiPublicSyncUploadRoute
 }
@@ -155,8 +171,10 @@ export interface FileRoutesById {
   '/api/health': typeof ApiHealthRoute
   '/_authenticated/files/$fileId': typeof AuthenticatedFilesFileIdRoute
   '/_authenticated/files/': typeof AuthenticatedFilesIndexRoute
+  '/api/public/sync/commit': typeof ApiPublicSyncCommitRoute
   '/api/public/sync/download': typeof ApiPublicSyncDownloadRoute
   '/api/public/sync/files': typeof ApiPublicSyncFilesRoute
+  '/api/public/sync/negotiate': typeof ApiPublicSyncNegotiateRoute
   '/api/public/sync/signatures': typeof ApiPublicSyncSignaturesRoute
   '/api/public/sync/upload': typeof ApiPublicSyncUploadRoute
 }
@@ -174,8 +192,10 @@ export interface FileRouteTypes {
     | '/api/health'
     | '/files/$fileId'
     | '/files/'
+    | '/api/public/sync/commit'
     | '/api/public/sync/download'
     | '/api/public/sync/files'
+    | '/api/public/sync/negotiate'
     | '/api/public/sync/signatures'
     | '/api/public/sync/upload'
   fileRoutesByTo: FileRoutesByTo
@@ -191,8 +211,10 @@ export interface FileRouteTypes {
     | '/api/health'
     | '/files/$fileId'
     | '/files'
+    | '/api/public/sync/commit'
     | '/api/public/sync/download'
     | '/api/public/sync/files'
+    | '/api/public/sync/negotiate'
     | '/api/public/sync/signatures'
     | '/api/public/sync/upload'
   id:
@@ -209,8 +231,10 @@ export interface FileRouteTypes {
     | '/api/health'
     | '/_authenticated/files/$fileId'
     | '/_authenticated/files/'
+    | '/api/public/sync/commit'
     | '/api/public/sync/download'
     | '/api/public/sync/files'
+    | '/api/public/sync/negotiate'
     | '/api/public/sync/signatures'
     | '/api/public/sync/upload'
   fileRoutesById: FileRoutesById
@@ -223,8 +247,10 @@ export interface RootRouteChildren {
   PlaygroundRoute: typeof PlaygroundRoute
   SitemapDotxmlRoute: typeof SitemapDotxmlRoute
   ApiHealthRoute: typeof ApiHealthRoute
+  ApiPublicSyncCommitRoute: typeof ApiPublicSyncCommitRoute
   ApiPublicSyncDownloadRoute: typeof ApiPublicSyncDownloadRoute
   ApiPublicSyncFilesRoute: typeof ApiPublicSyncFilesRoute
+  ApiPublicSyncNegotiateRoute: typeof ApiPublicSyncNegotiateRoute
   ApiPublicSyncSignaturesRoute: typeof ApiPublicSyncSignaturesRoute
   ApiPublicSyncUploadRoute: typeof ApiPublicSyncUploadRoute
 }
@@ -329,6 +355,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicSyncSignaturesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/sync/negotiate': {
+      id: '/api/public/sync/negotiate'
+      path: '/api/public/sync/negotiate'
+      fullPath: '/api/public/sync/negotiate'
+      preLoaderRoute: typeof ApiPublicSyncNegotiateRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/sync/files': {
       id: '/api/public/sync/files'
       path: '/api/public/sync/files'
@@ -341,6 +374,13 @@ declare module '@tanstack/react-router' {
       path: '/api/public/sync/download'
       fullPath: '/api/public/sync/download'
       preLoaderRoute: typeof ApiPublicSyncDownloadRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/public/sync/commit': {
+      id: '/api/public/sync/commit'
+      path: '/api/public/sync/commit'
+      fullPath: '/api/public/sync/commit'
+      preLoaderRoute: typeof ApiPublicSyncCommitRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
@@ -374,8 +414,10 @@ const rootRouteChildren: RootRouteChildren = {
   PlaygroundRoute: PlaygroundRoute,
   SitemapDotxmlRoute: SitemapDotxmlRoute,
   ApiHealthRoute: ApiHealthRoute,
+  ApiPublicSyncCommitRoute: ApiPublicSyncCommitRoute,
   ApiPublicSyncDownloadRoute: ApiPublicSyncDownloadRoute,
   ApiPublicSyncFilesRoute: ApiPublicSyncFilesRoute,
+  ApiPublicSyncNegotiateRoute: ApiPublicSyncNegotiateRoute,
   ApiPublicSyncSignaturesRoute: ApiPublicSyncSignaturesRoute,
   ApiPublicSyncUploadRoute: ApiPublicSyncUploadRoute,
 }
