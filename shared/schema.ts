@@ -35,9 +35,14 @@ export const fileVersions = sqliteTable("file_versions", {
   /** `cdc` = content-defined chunks; `fixed` = legacy fixed-size blocks. */
   chunkingMode:  text("chunking_mode").notNull().default("fixed").$type<"cdc" | "fixed">(),
   contentSha256: text("content_sha256").notNull().default(""),
+  /** Chunk verification status: pending (just committed), verified (all chunks confirmed in S3), corrupted (missing chunks detected). */
+  verificationStatus: text("verification_status").notNull().default("pending").$type<"pending" | "verified" | "corrupted">(),
+  /** Soft-delete marker for version retention pruning. Versions past this timestamp are eligible for hard deletion. */
+  retainedUntil: integer("retained_until", { mode: 'timestamp_ms' }),
   createdAt:     integer("created_at", { mode: 'timestamp_ms' }).$defaultFn(() => new Date()).notNull(),
 }, (t) => [
   uniqueIndex("file_versions_file_verno_unique").on(t.fileId, t.versionNo),
+  index("file_versions_file_created_idx").on(t.fileId, t.createdAt),
 ]);
 
 export const blocks = sqliteTable("blocks", {
@@ -107,7 +112,7 @@ export const apiKeysRelations = relations(apiKeys, ({ one }) => ({
 export const outboxEvents = sqliteTable("outbox_events", {
   id:          text("id").primaryKey().$defaultFn(() => crypto.randomUUID()),
   eventType:   text("event_type").notNull().$type<
-    "FILE_VERSION_CREATED" | "FILE_DELETED" | "GC_REQUESTED" | "CHUNK_VERIFICATION"
+    "FILE_VERSION_CREATED" | "FILE_DELETED" | "GC_REQUESTED" | "CHUNK_VERIFICATION" | "CHUNK_VERIFICATION_FAILED"
   >(),
   aggregateId: text("aggregate_id").notNull(),
   payload:     text("payload").notNull(), // JSON-encoded event data

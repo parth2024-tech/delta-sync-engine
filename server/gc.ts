@@ -11,19 +11,14 @@
  * The core transactional database experiences zero load during the S3
  * reconciliation phase. GC runs are tracked in the `gc_runs` table.
  *
- * When S3 Inventory Reports are enabled:
- *   - Configure S3 to dump daily inventory CSVs to a separate bucket
- *   - This GC reads the inventory CSV instead of doing ListObjectsV2
- *   - Eliminates S3 LIST API costs for large buckets (millions of objects)
- *
  * Run: npx tsx --env-file=.env server/gc.ts
  */
 
 import { S3Client, ListObjectsV2Command, DeleteObjectsCommand, GetObjectCommand } from "@aws-sdk/client-s3";
-import { pool, db } from "./db";
-import { gcRuns } from "../shared/schema";
+import { db } from "./db";
+import { gcRuns, blocks, fileVersions } from "../shared/schema";
 import { decodeChunkManifestV1 } from "../shared/chunk-manifest";
-import { eq } from "drizzle-orm";
+import { eq, gt, asc, isNotNull } from "drizzle-orm";
 
 const s3 = new S3Client({
   region: process.env.S3_REGION || "auto",
@@ -39,17 +34,12 @@ const INVENTORY_BUCKET = process.env.S3_INVENTORY_BUCKET || "";
 const INVENTORY_KEY = process.env.S3_INVENTORY_KEY || "";
 
 // ── Roaring Bitmap Simulation ─────────────────────────────────────────────────
-// In production, use the `roaring` npm package for true Roaring Bitmap
-// compression. Here we use a Set<string> partitioned into buckets for
-// memory efficiency with hash prefixes.
 
 /**
  * Compressed hash set using prefix-bucketed Sets.
  * For 64-char hex SHA-256 hashes, we bucket by the first 2 hex chars (256 buckets).
  * Each bucket stores only the remaining 62 chars, saving ~3% memory per entry
  * and enabling fast membership testing via prefix dispatch.
- *
- * For true production scale (>10M hashes), swap this for the `roaring` WASM package.
  */
 class CompressedHashSet {
   private buckets: Map<string, Set<string>> = new Map();
@@ -86,63 +76,65 @@ class CompressedHashSet {
 
 // ── Phase 1: Build reference set from database ────────────────────────────────
 
-async function buildReferenceSet(): Promise<CompressedHashSet> {
+export async function buildReferenceSet(): Promise<CompressedHashSet> {
   const hashSet = new CompressedHashSet();
-  const client = await pool.connect();
 
-  try {
-    // Collect legacy block hashes
-    let blockOffset = 0;
-    const BLOCK_PAGE = 5000;
-    for (;;) {
-      const r = await client.query<{ strong_hash: string }>(
-        `SELECT DISTINCT strong_hash FROM blocks ORDER BY strong_hash LIMIT $1 OFFSET $2`,
-        [BLOCK_PAGE, blockOffset],
-      );
-      for (const row of r.rows) {
-        hashSet.add(row.strong_hash);
-      }
-      if (r.rows.length < BLOCK_PAGE) break;
-      blockOffset += BLOCK_PAGE;
+  // Collect legacy block hashes using Drizzle
+  const BLOCK_PAGE = 5000;
+  let blockOffset = 0;
+  for (;;) {
+    const rows = await db.select({ strongHash: blocks.strongHash })
+      .from(blocks)
+      .limit(BLOCK_PAGE)
+      .offset(blockOffset);
+    for (const row of rows) {
+      hashSet.add(row.strongHash);
     }
-    console.log(`[GC] Phase 1a: Indexed ${hashSet.size} legacy block hashes`);
+    if (rows.length < BLOCK_PAGE) break;
+    blockOffset += BLOCK_PAGE;
+  }
+  console.log(`[GC] Phase 1a: Indexed ${hashSet.size} legacy block hashes`);
 
-    // Stream chunk manifests in pages (cursor-based, no OFFSET penalty)
-    let lastId = "";
-    let versionsSeen = 0;
-    const PAGE_SIZE = 80;
+  // Stream chunk manifests in pages (cursor-based using id ordering)
+  let lastId = "";
+  let versionsSeen = 0;
+  const PAGE_SIZE = 80;
 
-    for (;;) {
-      const r = await client.query(
-        lastId === ""
-          ? `SELECT id, chunk_manifest FROM file_versions WHERE chunk_manifest IS NOT NULL ORDER BY id ASC LIMIT ${PAGE_SIZE}`
-          : `SELECT id, chunk_manifest FROM file_versions WHERE chunk_manifest IS NOT NULL AND id > $1 ORDER BY id ASC LIMIT ${PAGE_SIZE}`,
-        lastId === "" ? [] : [lastId],
-      );
+  for (;;) {
+    const rows = lastId === ""
+      ? await db.select({ id: fileVersions.id, chunkManifest: fileVersions.chunkManifest })
+          .from(fileVersions)
+          .where(isNotNull(fileVersions.chunkManifest))
+          .orderBy(asc(fileVersions.id))
+          .limit(PAGE_SIZE)
+      : await db.select({ id: fileVersions.id, chunkManifest: fileVersions.chunkManifest })
+          .from(fileVersions)
+          .where(gt(fileVersions.id, lastId))
+          .orderBy(asc(fileVersions.id))
+          .limit(PAGE_SIZE);
 
-      if (r.rows.length === 0) break;
+    if (rows.length === 0) break;
 
-      for (const row of r.rows) {
-        lastId = row.id as string;
-        versionsSeen++;
-        try {
-          const chunks = decodeChunkManifestV1(Buffer.from(row.chunk_manifest));
+    for (const row of rows) {
+      lastId = row.id;
+      versionsSeen++;
+      try {
+        if (row.chunkManifest) {
+          const chunks = decodeChunkManifestV1(Buffer.from(row.chunkManifest));
           for (const chunk of chunks) {
             hashSet.add(chunk.strongHashHex);
           }
-        } catch {
-          // Skip corrupted manifests
-          console.warn(`[GC] Skipping corrupted manifest for version ${row.id}`);
         }
+      } catch {
+        // Skip corrupted manifests
+        console.warn(`[GC] Skipping corrupted manifest for version ${row.id}`);
       }
-
-      if (r.rows.length < PAGE_SIZE) break;
     }
 
-    console.log(`[GC] Phase 1b: Processed ${versionsSeen} version manifests → ${hashSet.size} total unique hashes`);
-  } finally {
-    client.release();
+    if (rows.length < PAGE_SIZE) break;
   }
+
+  console.log(`[GC] Phase 1b: Processed ${versionsSeen} version manifests → ${hashSet.size} total unique hashes`);
 
   return hashSet;
 }
@@ -204,8 +196,6 @@ async function reconcileWithS3Listing(hashSet: CompressedHashSet): Promise<numbe
 
 /**
  * Reconcile using S3 Inventory CSV (for large buckets with millions of objects).
- * S3 Inventory Reports are pre-generated CSVs listing all objects, eliminating
- * the need for expensive ListObjectsV2 pagination.
  */
 async function reconcileWithInventory(hashSet: CompressedHashSet): Promise<number> {
   if (!INVENTORY_BUCKET || !INVENTORY_KEY) {
@@ -233,7 +223,6 @@ async function reconcileWithInventory(hashSet: CompressedHashSet): Promise<numbe
 
     for (const line of lines) {
       if (!line.trim()) continue;
-      // S3 Inventory CSV format: bucket, key, ...
       const parts = line.split(",");
       const key = parts[1]?.replace(/"/g, "").trim();
       if (!key || key.startsWith("temp-")) continue;

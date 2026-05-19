@@ -5,10 +5,10 @@
  * pre-signed URLs, it calls this endpoint to finalize the file version.
  *
  * This endpoint:
- *   1. Validates the negotiation token from Redis
- *   2. Verifies all required chunks exist in S3
- *   3. Atomically creates the file_versions record with chunk_manifest
- *   4. Emits a FILE_VERSION_CREATED event to the outbox table
+ *   1. Validates the negotiation token
+ *   2. Atomically creates the file_versions record with chunk_manifest (status: pending)
+ *   3. Emits a FILE_VERSION_CREATED event to the outbox table
+ *   4. Background worker will verify all chunks exist in S3 asynchronously
  *   5. Responds instantly — no binary data flows through the server
  */
 
@@ -18,49 +18,15 @@ import { validateApiKey } from "@/lib/api-key-auth";
 import { db } from "../../../../../server/db";
 import { files, fileVersions, syncJobs, outboxEvents } from "../../../../../shared/schema";
 import { encodeChunkManifestV1 } from "../../../../../shared/chunk-manifest";
-import { max, eq, and, sql } from "drizzle-orm";
+import { max, eq, and } from "drizzle-orm";
 import { z } from "zod";
 
-import {
-  S3Client,
-  HeadObjectCommand,
-} from "@aws-sdk/client-s3";
-import { createS3Limiter } from "../../../../../server/s3-limiter";
-
-import { getAndClearNegotiation, NegotiationPayload } from "../../../../../server/negotiation-store";
-
-const s3 = new S3Client({
-  region: process.env.S3_REGION || "auto",
-  endpoint: process.env.S3_ENDPOINT,
-  forcePathStyle: true,
-  credentials: {
-    accessKeyId: process.env.S3_ACCESS_KEY_ID || "dev",
-    secretAccessKey: process.env.S3_SECRET_ACCESS_KEY || "dev",
-  },
-});
-const BUCKET_NAME = process.env.S3_BUCKET_NAME || "deltasync-blocks";
-
-const s3Limited = createS3Limiter(
-  Math.max(1, Math.min(32, parseInt(process.env.S3_UPLOAD_CONCURRENCY || "12", 10) || 12)),
-);
+import { getAndClearNegotiation } from "../../../../../server/negotiation-store";
+import { pruneFileVersions } from "../../../../../server/version-pruner";
 
 const commitSchema = z.object({
   negotiationId: z.string().uuid(),
 });
-
-async function blockExists(key: string): Promise<boolean> {
-  try {
-    await s3Limited(() =>
-      s3.send(new HeadObjectCommand({ Bucket: BUCKET_NAME, Key: key })),
-    );
-    return true;
-  } catch (e: unknown) {
-    const name = (e as { name?: string })?.name;
-    const code = (e as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode;
-    if (name === "NotFound" || code === 404) return false;
-    throw e;
-  }
-}
 
 
 
@@ -89,29 +55,7 @@ export const Route = createFileRoute("/api/public/sync/commit")({
           return json({ error: "User mismatch" }, 403);
         }
 
-        // Spot-check: verify a sample of chunks exist in S3
-        const uniqueHashes = [...new Set(negotiation.chunks.map((c) => c.strongHash))];
-        const SPOT_CHECK_COUNT = Math.min(10, uniqueHashes.length);
-        const spotCheckHashes = uniqueHashes
-          .sort(() => Math.random() - 0.5)
-          .slice(0, SPOT_CHECK_COUNT);
-
-        const spotResults = await Promise.all(
-          spotCheckHashes.map(async (hash) => ({
-            hash,
-            exists: await blockExists(hash),
-          })),
-        );
-
-        const missingInSpot = spotResults.filter((r) => !r.exists);
-        if (missingInSpot.length > 0) {
-          return json({
-            error: "Some chunks have not been uploaded yet",
-            missing: missingInSpot.map((r) => r.hash),
-          }, 409);
-        }
-
-        // Build the chunk manifest
+        // Build the chunk manifest (no spot-check; full verification happens in background worker)
         type ManifestRow = { offset: number; length: number; weakHash: number; strongHashHex: string };
         const manifestRows: ManifestRow[] = [];
         let runningOffset = 0;
@@ -178,6 +122,7 @@ export const Route = createFileRoute("/api/public/sync/commit")({
               chunkManifest: packed,
               chunkingMode: negotiation.chunking,
               contentSha256: negotiation.contentSha256,
+              verificationStatus: "pending",
             }).returning();
 
             await tx.update(files)
@@ -216,6 +161,14 @@ export const Route = createFileRoute("/api/public/sync/commit")({
             return json({ error: "Concurrent sync conflict. Please pull and retry." }, 409);
           }
           throw err;
+        }
+
+        // Fire version pruner asynchronously (non-blocking)
+        const committedFileId = returnVal.versionNo > 0 ? (await db.select({ id: files.id }).from(files).where(and(eq(files.userId, userId), eq(files.path, negotiation.path))))[0]?.id : undefined;
+        if (committedFileId) {
+          void pruneFileVersions(committedFileId).catch((err) =>
+            console.error("[Pruner] Error:", err),
+          );
         }
 
         return json(returnVal);

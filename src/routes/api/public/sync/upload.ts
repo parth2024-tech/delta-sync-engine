@@ -22,6 +22,7 @@ import type { UploadOp } from "../../../../../shared/ops-binary";
 import { loadVersionChunks } from "../../../../../server/version-chunks";
 import { createS3Limiter } from "../../../../../server/s3-limiter";
 import { native } from "../../../../../server/native-bridge";
+import { pruneFileVersions } from "../../../../../server/version-pruner";
 import { max, eq, and, sql } from "drizzle-orm";
 import { z } from "zod";
 
@@ -312,6 +313,7 @@ export const Route = createFileRoute("/api/public/sync/upload")({
               chunkManifest: packed,
               chunkingMode:  meta.chunking,
               contentSha256: meta.contentSha256,
+              verificationStatus: "pending",
             }).returning();
 
             await tx.update(files)
@@ -345,6 +347,17 @@ export const Route = createFileRoute("/api/public/sync/upload")({
             return json({ error: "Concurrent sync conflict. Please pull and retry." }, 409);
           }
           throw err;
+        }
+
+        // Fire version pruner asynchronously (non-blocking)
+        if (returnVal.versionNo > 0) {
+          const [committedFile] = await db.select({ id: files.id }).from(files)
+            .where(and(eq(files.userId, userId), eq(files.path, meta.path)));
+          if (committedFile) {
+            void pruneFileVersions(committedFile.id).catch((err) =>
+              console.error("[Pruner] Error:", err),
+            );
+          }
         }
 
         return json(returnVal);

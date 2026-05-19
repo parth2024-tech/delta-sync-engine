@@ -6,6 +6,8 @@
  *   2. This dispatcher polls for unprocessed events every N seconds
  *   3. Executes the handler directly in-process
  *   4. Marks the event as processed (sets processedAt timestamp)
+ *
+ * Also schedules automatic daily garbage collection via GC_REQUESTED events.
  */
 
 import { db } from "./db";
@@ -15,6 +17,9 @@ import { handleVerifyChunks, handleCleanupFile, runGarbageCollection } from "./w
 
 const POLL_INTERVAL_MS = parseInt(process.env.OUTBOX_POLL_MS || "2000", 10);
 const BATCH_SIZE = 50;
+
+// Schedule automatic GC once per day (24 hours)
+const GC_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 let running = true;
 
@@ -34,13 +39,19 @@ async function pollAndDispatch(): Promise<number> {
     try {
       const payload = JSON.parse(event.payload);
 
-      // Execute directly
+      // Execute directly based on event type
       if (event.eventType === "FILE_VERSION_CREATED" || event.eventType === "CHUNK_VERIFICATION") {
         await handleVerifyChunks(payload.versionId);
       } else if (event.eventType === "FILE_DELETED") {
-        await handleCleanupFile(payload.fileId);
+        await handleCleanupFile(payload);
       } else if (event.eventType === "GC_REQUESTED") {
         await runGarbageCollection();
+      } else if (event.eventType === "CHUNK_VERIFICATION_FAILED") {
+        // Log the alert — extensible for future notification integrations
+        console.warn(
+          `[OutboxDispatcher] ⚠ CHUNK VERIFICATION FAILED for version ${payload.versionId}: ` +
+          `${payload.missingCount}/${payload.totalHashes} chunks missing`,
+        );
       } else {
         console.warn(`[OutboxDispatcher] Unknown event type: ${event.eventType}`);
       }
@@ -63,8 +74,23 @@ async function pollAndDispatch(): Promise<number> {
   return dispatched;
 }
 
+async function scheduleGc() {
+  console.log(`[OutboxDispatcher] Scheduling automatic GC every ${GC_INTERVAL_MS / 3600000}h`);
+  await db.insert(outboxEvents).values({
+    eventType: "GC_REQUESTED",
+    aggregateId: "scheduled",
+    payload: JSON.stringify({ trigger: "daily-timer", scheduledAt: new Date().toISOString() }),
+  });
+}
+
 async function runDispatcherLoop() {
   console.log(`[OutboxDispatcher] Started Lite Mode — polling every ${POLL_INTERVAL_MS}ms`);
+
+  // Schedule daily GC timer
+  const gcTimer = setInterval(() => {
+    scheduleGc().catch((err) => console.error("[OutboxDispatcher] GC scheduling error:", err));
+  }, GC_INTERVAL_MS);
+  gcTimer.unref();
 
   while (running) {
     try {
@@ -74,6 +100,7 @@ async function runDispatcherLoop() {
     }
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
   }
+  clearInterval(gcTimer);
   console.log("[OutboxDispatcher] Shutting down...");
 }
 

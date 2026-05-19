@@ -1,16 +1,22 @@
 /**
  * Background Worker logic for Lite Mode MVP.
  * Exports functions that are called directly by the Outbox Dispatcher.
+ *
+ * Handlers:
+ *   - handleVerifyChunks: Verify ALL chunks exist in S3, update verification_status
+ *   - handleCleanupFile:  Delete orphaned S3 chunks when a file is deleted
+ *   - runGarbageCollection: Full offline GC (re-exported from gc.ts)
  */
 
 import { runGarbageCollection } from "./gc";
 import { db } from "./db";
-import { fileVersions } from "../shared/schema";
+import { fileVersions, outboxEvents } from "../shared/schema";
 import { decodeChunkManifestV1 } from "../shared/chunk-manifest";
 import { eq } from "drizzle-orm";
 import {
   S3Client,
   HeadObjectCommand,
+  DeleteObjectsCommand,
 } from "@aws-sdk/client-s3";
 
 const s3 = new S3Client({
@@ -24,6 +30,11 @@ const s3 = new S3Client({
 });
 const BUCKET_NAME = process.env.S3_BUCKET_NAME || "deltasync-blocks";
 
+/**
+ * Verify that ALL chunks referenced by a file version exist in S3.
+ * Updates the version's verification_status to 'verified' or 'corrupted'.
+ * On corruption, emits a CHUNK_VERIFICATION_FAILED outbox event.
+ */
 export async function handleVerifyChunks(versionId: string) {
   if (!versionId) {
     console.warn(`[Worker:verify-chunks] Missing versionId`);
@@ -41,40 +52,103 @@ export async function handleVerifyChunks(versionId: string) {
   const chunks = decodeChunkManifestV1(Buffer.from(version.chunkManifest));
   const uniqueHashes = [...new Set(chunks.map((c) => c.strongHashHex))];
 
-  let missing = 0;
+  const missingHashes: string[] = [];
   const BATCH = 50;
+
   for (let i = 0; i < uniqueHashes.length; i += BATCH) {
     const batch = uniqueHashes.slice(i, i + BATCH);
     const results = await Promise.all(
       batch.map(async (hash) => {
         try {
           await s3.send(new HeadObjectCommand({ Bucket: BUCKET_NAME, Key: hash }));
-          return true;
+          return { hash, exists: true };
         } catch {
-          return false;
+          return { hash, exists: false };
         }
       }),
     );
-    missing += results.filter((ok) => !ok).length;
+    for (const r of results) {
+      if (!r.exists) missingHashes.push(r.hash);
+    }
   }
 
-  if (missing > 0) {
+  if (missingHashes.length > 0) {
+    // Mark as corrupted
+    await db.update(fileVersions)
+      .set({ verificationStatus: "corrupted" })
+      .where(eq(fileVersions.id, versionId));
+
+    // Emit alert event
+    await db.insert(outboxEvents).values({
+      eventType: "CHUNK_VERIFICATION_FAILED",
+      aggregateId: versionId,
+      payload: JSON.stringify({
+        versionId,
+        fileId: version.fileId,
+        missingHashes,
+        totalHashes: uniqueHashes.length,
+        missingCount: missingHashes.length,
+      }),
+    });
+
     console.error(
-      `[Worker:verify-chunks] ⚠ Version ${versionId} has ${missing}/${uniqueHashes.length} missing chunks in S3!`,
+      `[Worker:verify-chunks] ⚠ Version ${versionId} CORRUPTED: ${missingHashes.length}/${uniqueHashes.length} chunks missing in S3`,
     );
   } else {
+    // Mark as verified
+    await db.update(fileVersions)
+      .set({ verificationStatus: "verified" })
+      .where(eq(fileVersions.id, versionId));
+
     console.log(
       `[Worker:verify-chunks] ✓ Version ${versionId}: all ${uniqueHashes.length} chunks verified`,
     );
   }
 }
 
-export async function handleCleanupFile(fileId: string) {
+/**
+ * Clean up S3 objects when a file is deleted.
+ * Expects payload to contain chunkHashes[] extracted before DB deletion.
+ * Falls back to logging a deferral if no hashes are provided.
+ */
+export async function handleCleanupFile(payload: { fileId: string; chunkHashes?: string[] }) {
+  const { fileId, chunkHashes } = payload;
+
   if (!fileId) {
     console.warn(`[Worker:cleanup-file] Missing fileId`);
     return;
   }
-  console.log(`[Worker:cleanup-file] File ${fileId} deletion noted. Orphans will be cleaned in next GC cycle.`);
+
+  if (!chunkHashes || chunkHashes.length === 0) {
+    console.log(
+      `[Worker:cleanup-file] File ${fileId} deletion noted — no chunk hashes provided. Orphans will be cleaned in next GC cycle.`,
+    );
+    return;
+  }
+
+  // Batch delete S3 objects (max 1000 per request)
+  const DELETE_BATCH = 1000;
+  let totalDeleted = 0;
+
+  for (let i = 0; i < chunkHashes.length; i += DELETE_BATCH) {
+    const batch = chunkHashes.slice(i, i + DELETE_BATCH);
+    try {
+      await s3.send(new DeleteObjectsCommand({
+        Bucket: BUCKET_NAME,
+        Delete: {
+          Objects: batch.map((Key) => ({ Key })),
+          Quiet: true,
+        },
+      }));
+      totalDeleted += batch.length;
+    } catch (err) {
+      console.error(`[Worker:cleanup-file] S3 batch delete failed:`, err);
+    }
+  }
+
+  console.log(
+    `[Worker:cleanup-file] Deleted ${totalDeleted}/${chunkHashes.length} chunks for file ${fileId}`,
+  );
 }
 
 export { runGarbageCollection };
