@@ -45,15 +45,8 @@ const s3Limited = createS3Limiter(
   Math.max(1, Math.min(32, parseInt(process.env.S3_UPLOAD_CONCURRENCY || "12", 10) || 12)),
 );
 
-import Redis from "ioredis";
-const redis = new Redis(process.env.REDIS_URL || "redis://localhost:6379");
-
-async function checkRateLimit(userId: string) {
-  const key = `rate_limit:negotiate:${userId}`;
-  const count = await redis.incr(key);
-  if (count === 1) await redis.expire(key, 60);
-  return count <= 120; // more generous for negotiation (lightweight)
-}
+import { checkRateLimit } from "../../../../../server/rate-limiter";
+import { setNegotiation } from "../../../../../server/negotiation-store";
 
 const chunkInfoSchema = z.object({
   strongHash: z.string().length(64),
@@ -191,11 +184,9 @@ export const Route = createFileRoute("/api/public/sync/negotiate")({
           });
         }
 
-        // Create a negotiation token (stored in Redis) to validate the commit phase
+        // Create a negotiation token (stored in memory) to validate the commit phase
         const negotiationId = crypto.randomUUID();
-        await redis.set(
-          `negotiate:${negotiationId}`,
-          JSON.stringify({
+        setNegotiation(negotiationId, {
             userId,
             path: body.path,
             chunking: body.chunking,
@@ -204,9 +195,7 @@ export const Route = createFileRoute("/api/public/sync/negotiate")({
             contentSha256: body.contentSha256,
             chunks: body.chunks,
             snapshotCurrentVersionId,
-          }),
-          "EX", PRESIGN_EXPIRY,
-        );
+        });
 
         return json({
           negotiationId,

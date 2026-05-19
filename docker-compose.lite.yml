@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  # The Delta Sync Engine Node.js + Rust API
+  deltasync-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "5000:5000"
+    environment:
+      - PORT=5000
+      - NODE_ENV=production
+      - JWT_SECRET=lite-mode-dev-secret-key-12345
+      - S3_REGION=us-east-1
+      - S3_ENDPOINT=http://minio:9000
+      - S3_ACCESS_KEY_ID=minioadmin
+      - S3_SECRET_ACCESS_KEY=minioadmin
+      - S3_BUCKET_NAME=deltasync-blocks
+    depends_on:
+      - minio
+
+  # Local S3-Compatible Storage for Lite Mode
+  minio:
+    image: minio/minio:latest
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio-data:/data
+
+  # Automatic bucket creation for MinIO
+  createbuckets:
+    image: minio/mc
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      /usr/bin/mc config host add myminio http://minio:9000 minioadmin minioadmin;
+      /usr/bin/mc mb myminio/deltasync-blocks;
+      /usr/bin/mc anonymous set public myminio/deltasync-blocks;
+      exit 0;
+      "
+
+volumes:
+  minio-data:

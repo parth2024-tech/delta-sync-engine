@@ -7,7 +7,7 @@ export const Route = createFileRoute("/api/health")({
     handlers: {
       GET: async () => {
         try {
-          await db.execute(sql`SELECT 1`);
+          await db.get(sql`SELECT 1`);
           return new Response("OK", { status: 200 });
         } catch (error) {
           console.error("Health probe failed:", error);

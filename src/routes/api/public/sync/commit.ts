@@ -27,9 +27,7 @@ import {
 } from "@aws-sdk/client-s3";
 import { createS3Limiter } from "../../../../../server/s3-limiter";
 
-import Redis from "ioredis";
-
-const redis = new Redis(process.env.REDIS_URL || "redis://localhost:6379");
+import { getAndClearNegotiation, NegotiationPayload } from "../../../../../server/negotiation-store";
 
 const s3 = new S3Client({
   region: process.env.S3_REGION || "auto",
@@ -64,16 +62,7 @@ async function blockExists(key: string): Promise<boolean> {
   }
 }
 
-interface NegotiationPayload {
-  userId: string;
-  path: string;
-  chunking: "cdc" | "fixed";
-  blockSize: number;
-  newSize: number;
-  contentSha256: string;
-  chunks: { strongHash: string; length: number; weakHash?: number }[];
-  snapshotCurrentVersionId: string | null;
-}
+
 
 export const Route = createFileRoute("/api/public/sync/commit")({
   server: {
@@ -90,17 +79,9 @@ export const Route = createFileRoute("/api/public/sync/commit")({
         }
 
         // Retrieve and consume the negotiation token (one-time use)
-        const negotiationData = await redis.get(`negotiate:${body.negotiationId}`);
-        if (!negotiationData) {
+        const negotiation = getAndClearNegotiation(body.negotiationId);
+        if (!negotiation) {
           return json({ error: "Negotiation expired or invalid" }, 410);
-        }
-        await redis.del(`negotiate:${body.negotiationId}`);
-
-        let negotiation: NegotiationPayload;
-        try {
-          negotiation = JSON.parse(negotiationData);
-        } catch {
-          return json({ error: "Corrupted negotiation data" }, 500);
         }
 
         // Verify the authenticated user matches the negotiation
@@ -160,8 +141,7 @@ export const Route = createFileRoute("/api/public/sync/commit")({
         try {
           await db.transaction(async (tx) => {
             // Advisory lock to prevent concurrent writes to the same file
-            const lockKey = `${userId}:${negotiation.path}`;
-            await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${lockKey}::text))`);
+            // SQLite transactions are serialized natively.
 
             // Optimistic concurrency check
             const [ef] = await tx.select().from(files)

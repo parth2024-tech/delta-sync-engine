@@ -70,18 +70,7 @@ const s3Limited = createS3Limiter(
   Math.max(1, Math.min(32, parseInt(process.env.S3_UPLOAD_CONCURRENCY || "6", 10) || 6)),
 );
 
-import Redis from "ioredis";
-
-const redis = new Redis(process.env.REDIS_URL || "redis://localhost:6379");
-
-async function checkRateLimit(userId: string) {
-  const key = `rate_limit:${userId}`;
-  const count = await redis.incr(key);
-  if (count === 1) {
-    await redis.expire(key, 60);
-  }
-  return count <= 60;
-}
+import { checkRateLimit } from "../../../../../server/rate-limiter";
 
 async function blockExists(key: string): Promise<boolean> {
   try {
@@ -287,8 +276,7 @@ export const Route = createFileRoute("/api/public/sync/upload")({
 
         try {
           await db.transaction(async (tx) => {
-            const lockKey = `${userId}:${meta.path}`;
-            await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${lockKey}::text))`);
+            // SQLite transactions are naturally serialized for writes, so no advisory lock needed.
 
             const [ef] = await tx.select().from(files)
               .where(and(eq(files.userId, userId), eq(files.path, meta.path)));
