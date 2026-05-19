@@ -1,12 +1,32 @@
 /**
  * Delta engine: fixed-size rolling (legacy) or content-defined chunking (CDC).
  * Weak hash: Adler-32 (matches server + historical clients).
+ *
+ * Adaptive chunk sizing:
+ *   < 32 KB  → per-file hash comparison (skip CDC entirely)
+ *   32–256 KB → CDC with 4 KiB average
+ *   256 KB–10 MB → CDC with 16 KiB average (default)
+ *   > 10 MB → CDC with 64 KiB average (fewer chunks, faster hashing)
  */
 
 import { cdcRanges } from "../../shared/fastcdc.js";
 import { adler32, sha256Hex } from "../../shared/hash.js";
 
 export { encodeOpsBinaryV1 } from "../../shared/ops-binary.js";
+
+/** Files smaller than this skip CDC entirely and use whole-file hash comparison. */
+export const SMALL_FILE_THRESHOLD = 32 * 1024; // 32 KB
+
+/**
+ * Select an optimal CDC average chunk size based on file size.
+ * Returns 0 for files below the small-file threshold (meaning: skip CDC).
+ */
+export function adaptiveChunkSize(fileSize: number): number {
+  if (fileSize < SMALL_FILE_THRESHOLD) return 0;       // skip CDC
+  if (fileSize < 256 * 1024) return 4096;               // 4 KiB avg
+  if (fileSize < 10 * 1024 * 1024) return 16384;        // 16 KiB avg (default)
+  return 65536;                                          // 64 KiB avg
+}
 
 export interface Signature {
   blockIndex: number;

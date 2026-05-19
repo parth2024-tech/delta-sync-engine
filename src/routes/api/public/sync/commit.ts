@@ -21,7 +21,7 @@ import { encodeChunkManifestV1 } from "../../../../../shared/chunk-manifest";
 import { max, eq, and } from "drizzle-orm";
 import { z } from "zod";
 
-import { getAndClearNegotiation } from "../../../../../server/negotiation-store";
+import { getNegotiation, clearNegotiation } from "../../../../../server/negotiation-store";
 import { pruneFileVersions } from "../../../../../server/version-pruner";
 
 const commitSchema = z.object({
@@ -44,8 +44,8 @@ export const Route = createFileRoute("/api/public/sync/commit")({
           return json({ error: "Invalid request: " + String(e) }, 400);
         }
 
-        // Retrieve and consume the negotiation token (one-time use)
-        const negotiation = getAndClearNegotiation(body.negotiationId);
+        // Retrieve the negotiation token (not consumed until commit succeeds — supports retries)
+        const negotiation = getNegotiation(body.negotiationId);
         if (!negotiation) {
           return json({ error: "Negotiation expired or invalid" }, 410);
         }
@@ -162,6 +162,9 @@ export const Route = createFileRoute("/api/public/sync/commit")({
           }
           throw err;
         }
+
+        // Consume the negotiation token after successful commit
+        clearNegotiation(body.negotiationId);
 
         // Fire version pruner asynchronously (non-blocking)
         const committedFileId = returnVal.versionNo > 0 ? (await db.select({ id: files.id }).from(files).where(and(eq(files.userId, userId), eq(files.path, negotiation.path))))[0]?.id : undefined;

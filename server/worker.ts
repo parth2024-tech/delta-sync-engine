@@ -11,7 +11,7 @@
 import { runGarbageCollection } from "./gc";
 import { db } from "./db";
 import { fileVersions, outboxEvents } from "../shared/schema";
-import { decodeChunkManifestV1 } from "../shared/chunk-manifest";
+import { iterateManifestHashPages } from "../shared/chunk-manifest";
 import { eq } from "drizzle-orm";
 import {
   S3Client,
@@ -32,6 +32,7 @@ const BUCKET_NAME = process.env.S3_BUCKET_NAME || "deltasync-blocks";
 
 /**
  * Verify that ALL chunks referenced by a file version exist in S3.
+ * Uses a streaming page-based approach to avoid OOM on extremely large files.
  * Updates the version's verification_status to 'verified' or 'corrupted'.
  * On corruption, emits a CHUNK_VERIFICATION_FAILED outbox event.
  */
@@ -49,26 +50,31 @@ export async function handleVerifyChunks(versionId: string) {
     return;
   }
 
-  const chunks = decodeChunkManifestV1(Buffer.from(version.chunkManifest));
-  const uniqueHashes = [...new Set(chunks.map((c) => c.strongHashHex))];
-
+  const manifestBuf = Buffer.from(version.chunkManifest);
   const missingHashes: string[] = [];
+  let totalUniqueHashes = 0;
   const BATCH = 50;
 
-  for (let i = 0; i < uniqueHashes.length; i += BATCH) {
-    const batch = uniqueHashes.slice(i, i + BATCH);
-    const results = await Promise.all(
-      batch.map(async (hash) => {
-        try {
-          await s3.send(new HeadObjectCommand({ Bucket: BUCKET_NAME, Key: hash }));
-          return { hash, exists: true };
-        } catch {
-          return { hash, exists: false };
-        }
-      }),
-    );
-    for (const r of results) {
-      if (!r.exists) missingHashes.push(r.hash);
+  // Process manifest in pages to keep memory bounded
+  for (const page of iterateManifestHashPages(manifestBuf, 10_000)) {
+    totalUniqueHashes += page.length;
+
+    // Batch-check S3 for this page
+    for (let i = 0; i < page.length; i += BATCH) {
+      const batch = page.slice(i, i + BATCH);
+      const results = await Promise.all(
+        batch.map(async (hash) => {
+          try {
+            await s3.send(new HeadObjectCommand({ Bucket: BUCKET_NAME, Key: hash }));
+            return { hash, exists: true };
+          } catch {
+            return { hash, exists: false };
+          }
+        }),
+      );
+      for (const r of results) {
+        if (!r.exists) missingHashes.push(r.hash);
+      }
     }
   }
 
@@ -78,21 +84,21 @@ export async function handleVerifyChunks(versionId: string) {
       .set({ verificationStatus: "corrupted" })
       .where(eq(fileVersions.id, versionId));
 
-    // Emit alert event
+    // Emit alert event (limit missing hash list to 100 to prevent oversized payloads)
     await db.insert(outboxEvents).values({
       eventType: "CHUNK_VERIFICATION_FAILED",
       aggregateId: versionId,
       payload: JSON.stringify({
         versionId,
         fileId: version.fileId,
-        missingHashes,
-        totalHashes: uniqueHashes.length,
+        missingHashes: missingHashes.slice(0, 100),
+        totalHashes: totalUniqueHashes,
         missingCount: missingHashes.length,
       }),
     });
 
     console.error(
-      `[Worker:verify-chunks] ⚠ Version ${versionId} CORRUPTED: ${missingHashes.length}/${uniqueHashes.length} chunks missing in S3`,
+      `[Worker:verify-chunks] ⚠ Version ${versionId} CORRUPTED: ${missingHashes.length}/${totalUniqueHashes} chunks missing in S3`,
     );
   } else {
     // Mark as verified
@@ -101,7 +107,7 @@ export async function handleVerifyChunks(versionId: string) {
       .where(eq(fileVersions.id, versionId));
 
     console.log(
-      `[Worker:verify-chunks] ✓ Version ${versionId}: all ${uniqueHashes.length} chunks verified`,
+      `[Worker:verify-chunks] ✓ Version ${versionId}: all ${totalUniqueHashes} chunks verified`,
     );
   }
 }

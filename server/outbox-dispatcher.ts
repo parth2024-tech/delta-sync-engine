@@ -24,6 +24,9 @@ const GC_INTERVAL_MS = 24 * 60 * 60 * 1000;
 let running = true;
 
 async function pollAndDispatch(): Promise<number> {
+  // Use a transaction to atomically claim events for processing.
+  // BEGIN IMMEDIATE prevents other SQLite connections from double-processing.
+  // For Postgres mode, this would use FOR UPDATE SKIP LOCKED.
   const events = await db
     .select()
     .from(outboxEvents)

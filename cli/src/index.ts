@@ -8,12 +8,13 @@ import { createInterface } from "readline";
 import { Command } from "commander";
 
 import { readConfig, writeConfig } from "./config.js";
-import { getFile, upsertFile } from "./db.js";
-import { computeDelta, contentHash, encodeOpsBinaryV1 } from "./rsync.js";
+import { getFile, upsertFile, listFiles as listCachedFiles, pruneCache } from "./db.js";
+import { computeDelta, contentHash, encodeOpsBinaryV1, adaptiveChunkSize, SMALL_FILE_THRESHOLD } from "./rsync.js";
 import type { Op } from "./rsync.js";
 import { decodeOpsBinaryV1 } from "../../shared/ops-binary.js";
 import * as api from "./api.js";
 import type { UploadMetaJson } from "./api.js";
+import { syncAll } from "./sync.js";
 
 const program = new Command();
 
@@ -62,12 +63,32 @@ program.command("push <file>").description("Push a local file to the server").ac
   console.log(`Fetching remote signatures for ${filePath}…`);
   const remote    = await api.getSignatures(cfg, filePath);
   const chunking  = remote?.chunking === "fixed" ? "fixed" : "cdc";
-  const blockSize = remote?.blockSize ?? (chunking === "cdc" ? 16384 : 4096);
+
+  // Adaptive chunk sizing: select optimal block size based on file size
+  const adaptiveSize = adaptiveChunkSize(data.length);
+  const blockSize = adaptiveSize > 0
+    ? adaptiveSize
+    : (remote?.blockSize ?? (chunking === "cdc" ? 16384 : 4096));
+
+  // Small files below threshold: skip CDC entirely, upload as single literal if hash differs
+  if (adaptiveSize === 0 && !remote) {
+    console.log(`  small file (${fmtBytes(data.length)}) — full upload (CDC skipped)`);
+    const meta: UploadMetaJson = {
+      path: filePath, chunking: "cdc", blockSize: 4096,
+      newSize: data.length, contentSha256: hash,
+      opsEncoding: "json",
+      ops: [{ type: "literal", literalOffset: 0, literalLength: data.length }],
+    };
+    const result = await api.upload(cfg, meta, data);
+    upsertFile(filePath, stat.mtimeMs, stat.size, hash, result.versionNo);
+    console.log(`✓ pushed v${result.versionNo} — small file upload`);
+    return;
+  }
 
   if (remote) {
-    console.log(`  remote: v${remote.versionNo}, ${remote.signatures.length} chunks (${chunking})`);
+    console.log(`  remote: v${remote.versionNo}, ${remote.signatures.length} chunks (${chunking}, blockSize=${blockSize})`);
   } else {
-    console.log("  remote: new file (CDC avg 16 KiB)");
+    console.log(`  remote: new file (CDC avg ${fmtBytes(blockSize)})`);
   }
 
   const nativeBin = resolveNativeBinary();
@@ -207,6 +228,43 @@ program.command("status").description("Compare local files to server").action(as
   }
   console.log();
 });
+
+// ─── sync ──────────────────────────────────────────────────────────────────────
+program.command("sync")
+  .argument("[files...]", "files to sync (defaults to all tracked files)")
+  .option("--force-push", "resolve conflicts by pushing local version")
+  .option("--force-pull", "resolve conflicts by pulling server version")
+  .description("Two-way sync: push local changes, pull server changes, detect conflicts")
+  .action(async (files: string[], opts: { forcePush?: boolean; forcePull?: boolean }) => {
+    const paths = files.length > 0 ? files : listCachedFiles();
+    if (paths.length === 0) {
+      console.log("No files to sync. Push or pull a file first, or specify file paths.");
+      return;
+    }
+    console.log(`\nSyncing ${paths.length} file(s)…\n`);
+    const result = await syncAll(paths, opts);
+    console.log(`\n── Sync Summary ──`);
+    if (result.pushed.length)    console.log(`  ↑ Pushed:    ${result.pushed.length}`);
+    if (result.pulled.length)    console.log(`  ↓ Pulled:    ${result.pulled.length}`);
+    if (result.conflicts.length) console.log(`  ⚠ Conflicts: ${result.conflicts.length}`);
+    if (result.skipped.length)   console.log(`  ─ Skipped:   ${result.skipped.length}`);
+    console.log();
+  });
+
+// ─── gc ────────────────────────────────────────────────────────────────────────
+program.command("gc")
+  .option("--max-entries <n>", "maximum cache entries to keep", "1000")
+  .description("Clean up local cache: remove stale entries and enforce size limit")
+  .action((opts: { maxEntries: string }) => {
+    const max = parseInt(opts.maxEntries) || 1000;
+    const removed = pruneCache(max);
+    const remaining = listCachedFiles().length;
+    console.log(`\nCache GC complete:`);
+    console.log(`  Removed: ${removed} stale/excess entries`);
+    console.log(`  Remaining: ${remaining} entries`);
+    console.log(`  Max allowed: ${max}`);
+    console.log();
+  });
 
 function fmtBytes(b: number) {
   if (b >= 1e9) return `${(b / 1e9).toFixed(1)} GB`;

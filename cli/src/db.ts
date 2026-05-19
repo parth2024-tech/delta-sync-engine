@@ -10,6 +10,7 @@ interface FileRow {
   last_size: number;
   last_hash: string;
   server_version: number;
+  last_accessed?: number;
 }
 
 interface CacheShape {
@@ -30,7 +31,14 @@ function save(data: CacheShape) {
 }
 
 export function getFile(path: string): FileRow | undefined {
-  return load().files[path];
+  const data = load();
+  const entry = data.files[path];
+  if (entry) {
+    // Touch last_accessed on read
+    entry.last_accessed = Date.now();
+    save(data);
+  }
+  return entry;
 }
 
 export function upsertFile(path: string, mtime: number, size: number, hash: string, version: number) {
@@ -41,8 +49,49 @@ export function upsertFile(path: string, mtime: number, size: number, hash: stri
     last_size: size,
     last_hash: hash,
     server_version: version,
+    last_accessed: Date.now(),
   };
   save(data);
+}
+
+/** List all tracked file paths in the cache. */
+export function listFiles(): string[] {
+  return Object.keys(load().files);
+}
+
+/**
+ * Remove stale entries from the cache.
+ * Evicts entries for files that no longer exist on disk,
+ * then trims the cache to `maxEntries` by LRU (least recently accessed first).
+ *
+ * @returns Number of entries removed.
+ */
+export function pruneCache(maxEntries = 1000): number {
+  const data = load();
+  const entries = Object.entries(data.files);
+  let removed = 0;
+
+  // Phase 1: Remove entries for files that no longer exist on disk
+  for (const [path] of entries) {
+    if (!existsSync(path)) {
+      delete data.files[path];
+      removed++;
+    }
+  }
+
+  // Phase 2: Trim to maxEntries by LRU
+  const remaining = Object.entries(data.files);
+  if (remaining.length > maxEntries) {
+    remaining.sort((a, b) => (a[1].last_accessed ?? 0) - (b[1].last_accessed ?? 0));
+    const toRemove = remaining.length - maxEntries;
+    for (let i = 0; i < toRemove; i++) {
+      delete data.files[remaining[i]![0]];
+      removed++;
+    }
+  }
+
+  if (removed > 0) save(data);
+  return removed;
 }
 
 /** Reserved for future local signature caching (previously SQLite). */

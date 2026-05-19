@@ -86,3 +86,26 @@ export async function download(cfg: Config, path: string, version?: number): Pro
   const ab = await r.arrayBuffer();
   return Buffer.from(ab);
 }
+
+export interface FileInfo {
+  fileId: string;
+  path: string;
+  versionNo: number;
+  size: number;
+  contentSha256: string;
+  verificationStatus: "pending" | "verified" | "corrupted";
+}
+
+/**
+ * Fetch file metadata from the server without downloading binary content.
+ * Returns null if the file doesn't exist on the server.
+ */
+export async function getFileInfo(cfg: Config, path: string): Promise<FileInfo | null> {
+  const r = await fetch(`${cfg.serverUrl}/api/public/sync/info`, {
+    method:  "POST",
+    headers: { ...authHeader(cfg), "Content-Type": "application/json" },
+    body:    JSON.stringify({ path }),
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json() as Promise<FileInfo | null>;
+}

@@ -1,4 +1,11 @@
-// In-memory negotiation store for Lite Mode
+/**
+ * In-memory negotiation store for Lite Mode.
+ *
+ * Supports resumable uploads:
+ *   - getNegotiation() reads without consuming (allows retries)
+ *   - clearNegotiation() explicitly consumes after successful commit
+ *   - Extended TTL (1 hour) matches pre-signed URL expiry
+ */
 
 export interface NegotiationPayload {
   userId: string;
@@ -11,20 +18,46 @@ export interface NegotiationPayload {
   snapshotCurrentVersionId: string | null;
 }
 
+const NEGOTIATION_TTL_MS = 60 * 60 * 1000; // 1 hour (matches pre-signed URL expiry)
+
 const store = new Map<string, { payload: NegotiationPayload; expiresAt: number }>();
 
 export function setNegotiation(id: string, payload: NegotiationPayload) {
-  store.set(id, { payload, expiresAt: Date.now() + 10 * 60 * 1000 }); // 10 minutes
+  store.set(id, { payload, expiresAt: Date.now() + NEGOTIATION_TTL_MS });
 }
 
-export function getAndClearNegotiation(id: string): NegotiationPayload | null {
+/**
+ * Read a negotiation without consuming it.
+ * The negotiation remains valid for retries if commit fails.
+ */
+export function getNegotiation(id: string): NegotiationPayload | null {
   const entry = store.get(id);
   if (!entry) return null;
-  store.delete(id);
-  if (entry.expiresAt < Date.now()) return null;
+  if (entry.expiresAt < Date.now()) {
+    store.delete(id);
+    return null;
+  }
   return entry.payload;
 }
 
+/**
+ * Consume and remove a negotiation after successful commit.
+ */
+export function clearNegotiation(id: string): void {
+  store.delete(id);
+}
+
+/**
+ * Legacy one-shot: read and clear in a single call.
+ * @deprecated Use getNegotiation + clearNegotiation for resumable uploads.
+ */
+export function getAndClearNegotiation(id: string): NegotiationPayload | null {
+  const payload = getNegotiation(id);
+  if (payload) clearNegotiation(id);
+  return payload;
+}
+
+// Cleanup expired entries periodically
 setInterval(() => {
   const now = Date.now();
   for (const [id, entry] of store.entries()) {
