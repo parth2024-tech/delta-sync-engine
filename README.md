@@ -118,6 +118,19 @@ Deltasync is a high-performance delta-based file synchronization engine. It uses
     # You can now use `deltasync init`, `deltasync push`, etc.
     ```
 
+## 📊 Benchmarks & Performance
+
+Deltasync has been rigorously benchmarked against `aws s3 sync` and traditional fixed-block `rsync`.
+
+**Key Findings:**
+* **Large Files (100MB, 1% change):** Deltasync CDC achieves **99% bandwidth savings** and is **20× faster** than fixed-block rsync.
+* **Mixed Workloads:** Achieves **90%+ bandwidth savings** while being **27× faster** than fixed-block rsync.
+* **Efficiency:** Deltasync uses **15-20× less memory** (< 1MB) than fixed-block rsync because it uses a single-pass Content-Defined Chunking (CDC) scan instead of a byte-by-byte rolling window.
+
+For a detailed breakdown of the methodology, raw data, and an honest comparison of when to use which tool, see:
+* [Benchmark Results & Charts](docs/BENCHMARK_RESULTS.md)
+* [Comparison: Deltasync vs rsync vs aws s3 sync (FAQ)](docs/COMPARISON.md)
+
 ## 🧠 How the Algorithm Works
 
 1.  **Block & Sign**: The server splits the existing file into fixed-size blocks (e.g., 4 KiB). For each block, it computes a weak Adler-32 hash and a strong SHA-256 hash.
