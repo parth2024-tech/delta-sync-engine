@@ -15,6 +15,7 @@ import { decodeOpsBinaryV1 } from "../../shared/ops-binary.js";
 import * as api from "./api.js";
 import type { UploadMetaJson } from "./api.js";
 import { syncAll } from "./sync.js";
+import { performPush } from "./push.js";
 
 const program = new Command();
 
@@ -50,153 +51,13 @@ program.command("init").description("Initialise Deltasync in the current directo
 
 // ─── push ──────────────────────────────────────────────────────────────────────
 program.command("push <file>").description("Push a local file to the server").action(async (filePath: string) => {
-  const cfg    = readConfig();
-  if (!existsSync(filePath)) { console.error(`File not found: ${filePath}`); process.exit(1); }
-
-  const stat   = statSync(filePath);
-  const data   = readFileSync(filePath);
-  const hash   = await contentHash(data);
-  const cached = getFile(filePath);
-
-  if (cached?.last_hash === hash) { console.log(`✓ ${filePath} — unchanged, skipping`); return; }
-
-  console.log(`Fetching remote signatures for ${filePath}…`);
-  const remote    = await api.getSignatures(cfg, filePath);
-  const chunking  = remote?.chunking === "fixed" ? "fixed" : "cdc";
-
-  // Adaptive chunk sizing: select optimal block size based on file size
-  const adaptiveSize = adaptiveChunkSize(data.length);
-  const blockSize = adaptiveSize > 0
-    ? adaptiveSize
-    : (remote?.blockSize ?? (chunking === "cdc" ? 16384 : 4096));
-
-  // Small files below threshold: skip CDC entirely, upload as single literal if hash differs
-  if (adaptiveSize === 0 && !remote) {
-    console.log(`  small file (${fmtBytes(data.length)}) — full upload (CDC skipped)`);
-    const meta: UploadMetaJson = {
-      path: filePath, chunking: "cdc", blockSize: 4096,
-      newSize: data.length, contentSha256: hash,
-      opsEncoding: "json",
-      ops: [{ type: "literal", literalOffset: 0, literalLength: data.length }],
-    };
-    const result = await api.upload(cfg, meta, data);
-    upsertFile(filePath, stat.mtimeMs, stat.size, hash, result.versionNo);
-    console.log(`✓ pushed v${result.versionNo} — small file upload`);
-    return;
+  try {
+    const cfg = readConfig();
+    await performPush(filePath, cfg);
+  } catch (err) {
+    console.error(`✗ Push failed: ${(err as Error).message}`);
+    process.exit(1);
   }
-
-  if (remote) {
-    console.log(`  remote: v${remote.versionNo}, ${remote.signatures.length} chunks (${chunking}, blockSize=${blockSize})`);
-  } else {
-    console.log(`  remote: new file (CDC avg ${fmtBytes(blockSize)})`);
-  }
-
-  const nativeBin = resolveNativeBinary();
-  const minNative = Math.max(0, parseInt(process.env.DELTASYNC_NATIVE_MIN_BYTES || "2097152", 10) || 2097152);
-  const useNativePack = Boolean(nativeBin && chunking === "cdc" && data.length >= minNative);
-
-  let ops: Op[];
-  let literalBytes: Buffer;
-
-  if (useNativePack && nativeBin) {
-    console.log(`  using native pack-delta (${nativeBin})`);
-    const dir = mkdtempSync(join(tmpdir(), "deltasync-"));
-    try {
-      const remotePath = join(dir, "remote.json");
-      writeFileSync(remotePath, JSON.stringify(remote ?? { signatures: [], blockSize, chunking }));
-      const outOps = join(dir, "ops.bin");
-      const outLit = join(dir, "literals.bin");
-      const r = spawnSync(
-        nativeBin,
-        [
-          "pack-delta",
-          "--local", filePath,
-          "--remote-json", remotePath,
-          "--out-ops", outOps,
-          "--out-literals", outLit,
-          "--block-size", String(blockSize),
-          "--chunking", "cdc",
-        ],
-        { encoding: "utf8" },
-      );
-      if (r.error) throw r.error;
-      if (r.status !== 0) {
-        const errMsg = [r.stderr, r.stdout].map((x) => (x == null ? "" : String(x))).join("\n").trim();
-        throw new Error(errMsg || "native pack-delta failed");
-      }
-      literalBytes = readFileSync(outLit);
-      const opsBin = readFileSync(outOps);
-      const decoded = decodeOpsBinaryV1(opsBin);
-      const meta: UploadMetaJson = {
-        path:          filePath,
-        chunking,
-        blockSize,
-        newSize:       data.length,
-        contentSha256: hash,
-        opsEncoding:   "bin",
-        opCount:       decoded.length,
-      };
-      const literals = decoded.filter((o: Op) => o.type === "literal").length;
-      const copies   = decoded.filter((o: Op) => o.type === "copy").length;
-      console.log(`  delta: ${literals} literal run(s), ${copies} copy op(s) [native]`);
-      console.log(`  literal payload: ${fmtBytes(literalBytes.length)} raw`);
-      console.log(`  ops wire: binary (${opsBin.length} B)`);
-
-      const result = await api.upload(cfg, meta, literalBytes, opsBin);
-      upsertFile(filePath, stat.mtimeMs, stat.size, hash, result.versionNo);
-      const savedPct = data.length > 0 ? Math.round((result.bytesSaved / data.length) * 100) : 0;
-      console.log(`✓ pushed v${result.versionNo} — saved ${fmtBytes(result.bytesSaved)} (${savedPct}%)`);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-    return;
-  }
-
-  const delta = await computeDelta(
-    data,
-    remote?.signatures ?? [],
-    { chunking, blockSize },
-  );
-  ops = delta.ops;
-  literalBytes = delta.literalBytes;
-
-  const literals = ops.filter((o) => o.type === "literal").length;
-  const copies   = ops.filter((o) => o.type === "copy").length;
-  console.log(`  delta: ${literals} literal run(s), ${copies} copy op(s)`);
-  console.log(`  literal payload: ${fmtBytes(literalBytes.length)} raw`);
-
-  const useBin = ops.length >= OP_BIN_THRESHOLD || process.env.FORCE_OPS_BIN === "1";
-  let result: { versionNo: number; bytesSaved: number };
-  if (useBin) {
-    const opsBin = encodeOpsBinaryV1(ops);
-    console.log(`  ops wire: binary (${opsBin.length} B, threshold ${OP_BIN_THRESHOLD})`);
-    const meta: UploadMetaJson = {
-      path:          filePath,
-      chunking,
-      blockSize,
-      newSize:       data.length,
-      contentSha256: hash,
-      opsEncoding:   "bin",
-      opCount:       ops.length,
-    };
-    result = await api.upload(cfg, meta, literalBytes, opsBin);
-  } else {
-    console.log(`  ops wire: JSON (${ops.length} op(s))`);
-    const meta: UploadMetaJson = {
-      path:          filePath,
-      chunking,
-      blockSize,
-      newSize:       data.length,
-      contentSha256: hash,
-      opsEncoding:   "json",
-      ops,
-    };
-    result = await api.upload(cfg, meta, literalBytes);
-  }
-
-  upsertFile(filePath, stat.mtimeMs, stat.size, hash, result.versionNo);
-  const savedPct = data.length > 0 ? Math.round((result.bytesSaved / data.length) * 100) : 0;
-  console.log(`✓ pushed v${result.versionNo} — saved ${fmtBytes(result.bytesSaved)} (${savedPct}%)`);
 });
 
 // ─── pull ──────────────────────────────────────────────────────────────────────

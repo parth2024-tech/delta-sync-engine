@@ -1,10 +1,38 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import Database from "better-sqlite3";
+import { existsSync, mkdirSync } from "fs";
+import path from "path";
 
 mkdirSync(".deltasync", { recursive: true });
 
-const CACHE_PATH = ".deltasync/cache.json";
+const dbPath = path.join(".deltasync", "cache.db");
+const db = new Database(dbPath);
 
-interface FileRow {
+// Initialize tables
+db.exec(`
+  CREATE TABLE IF NOT EXISTS files (
+    path TEXT PRIMARY KEY,
+    last_mtime REAL NOT NULL,
+    last_size INTEGER NOT NULL,
+    last_hash TEXT NOT NULL,
+    server_version INTEGER NOT NULL,
+    last_accessed INTEGER NOT NULL
+  );
+  
+  CREATE TABLE IF NOT EXISTS chunk_transfers (
+    negotiation_id TEXT,
+    strong_hash TEXT,
+    status TEXT NOT NULL,
+    PRIMARY KEY (negotiation_id, strong_hash)
+  );
+
+  CREATE TABLE IF NOT EXISTS negotiation_sessions (
+    path TEXT PRIMARY KEY,
+    negotiation_id TEXT NOT NULL,
+    content_sha256 TEXT NOT NULL
+  );
+`);
+
+export interface FileRow {
   path: string;
   last_mtime: number;
   last_size: number;
@@ -13,88 +41,93 @@ interface FileRow {
   last_accessed?: number;
 }
 
-interface CacheShape {
-  files: Record<string, FileRow>;
-}
-
-function load(): CacheShape {
-  if (!existsSync(CACHE_PATH)) return { files: {} };
-  try {
-    return JSON.parse(readFileSync(CACHE_PATH, "utf8")) as CacheShape;
-  } catch {
-    return { files: {} };
+export function getFile(filePath: string): FileRow | undefined {
+  const row = db.prepare("SELECT * FROM files WHERE path = ?").get(filePath) as FileRow | undefined;
+  if (row) {
+    db.prepare("UPDATE files SET last_accessed = ? WHERE path = ?").run(Date.now(), filePath);
   }
+  return row;
 }
 
-function save(data: CacheShape) {
-  writeFileSync(CACHE_PATH, JSON.stringify(data, null, 2), "utf8");
+export function upsertFile(filePath: string, mtime: number, size: number, hash: string, version: number) {
+  db.prepare(`
+    INSERT INTO files (path, last_mtime, last_size, last_hash, server_version, last_accessed)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(path) DO UPDATE SET
+      last_mtime = excluded.last_mtime,
+      last_size = excluded.last_size,
+      last_hash = excluded.last_hash,
+      server_version = excluded.server_version,
+      last_accessed = excluded.last_accessed
+  `).run(filePath, mtime, size, hash, version, Date.now());
 }
 
-export function getFile(path: string): FileRow | undefined {
-  const data = load();
-  const entry = data.files[path];
-  if (entry) {
-    // Touch last_accessed on read
-    entry.last_accessed = Date.now();
-    save(data);
-  }
-  return entry;
-}
-
-export function upsertFile(path: string, mtime: number, size: number, hash: string, version: number) {
-  const data = load();
-  data.files[path] = {
-    path,
-    last_mtime: mtime,
-    last_size: size,
-    last_hash: hash,
-    server_version: version,
-    last_accessed: Date.now(),
-  };
-  save(data);
-}
-
-/** List all tracked file paths in the cache. */
 export function listFiles(): string[] {
-  return Object.keys(load().files);
+  const rows = db.prepare("SELECT path FROM files").all() as { path: string }[];
+  return rows.map((r) => r.path);
 }
 
-/**
- * Remove stale entries from the cache.
- * Evicts entries for files that no longer exist on disk,
- * then trims the cache to `maxEntries` by LRU (least recently accessed first).
- *
- * @returns Number of entries removed.
- */
 export function pruneCache(maxEntries = 1000): number {
-  const data = load();
-  const entries = Object.entries(data.files);
   let removed = 0;
-
   // Phase 1: Remove entries for files that no longer exist on disk
-  for (const [path] of entries) {
-    if (!existsSync(path)) {
-      delete data.files[path];
+  const paths = listFiles();
+  for (const filePath of paths) {
+    if (!existsSync(filePath)) {
+      db.prepare("DELETE FROM files WHERE path = ?").run(filePath);
       removed++;
     }
   }
 
   // Phase 2: Trim to maxEntries by LRU
-  const remaining = Object.entries(data.files);
+  const remaining = db.prepare("SELECT path FROM files ORDER BY last_accessed ASC").all() as { path: string }[];
   if (remaining.length > maxEntries) {
-    remaining.sort((a, b) => (a[1].last_accessed ?? 0) - (b[1].last_accessed ?? 0));
     const toRemove = remaining.length - maxEntries;
     for (let i = 0; i < toRemove; i++) {
-      delete data.files[remaining[i]![0]];
+      db.prepare("DELETE FROM files WHERE path = ?").run(remaining[i]!.path);
       removed++;
     }
   }
-
-  if (removed > 0) save(data);
   return removed;
 }
 
-/** Reserved for future local signature caching (previously SQLite). */
+// Stateful Journaling API
+export function recordChunkStatus(negotiationId: string, strongHash: string, status: "pending" | "completed") {
+  db.prepare(`
+    INSERT INTO chunk_transfers (negotiation_id, strong_hash, status)
+    VALUES (?, ?, ?)
+    ON CONFLICT(negotiation_id, strong_hash) DO UPDATE SET status = excluded.status
+  `).run(negotiationId, strongHash, status);
+}
+
+export function getCompletedChunks(negotiationId: string): Set<string> {
+  const rows = db.prepare("SELECT strong_hash FROM chunk_transfers WHERE negotiation_id = ? AND status = 'completed'").all(negotiationId) as { strong_hash: string }[];
+  return new Set(rows.map(r => r.strong_hash));
+}
+
+export function clearNegotiationChunks(negotiationId: string) {
+  db.prepare("DELETE FROM chunk_transfers WHERE negotiation_id = ?").run(negotiationId);
+}
+
+// Negotiation Sessions API
+export function getNegotiationSession(filePath: string): { negotiationId: string; contentSha256: string } | undefined {
+  return db.prepare("SELECT negotiation_id as negotiationId, content_sha256 as contentSha256 FROM negotiation_sessions WHERE path = ?").get(filePath) as any;
+}
+
+export function saveNegotiationSession(filePath: string, negotiationId: string, contentSha256: string) {
+  db.prepare(`
+    INSERT INTO negotiation_sessions (path, negotiation_id, content_sha256)
+    VALUES (?, ?, ?)
+    ON CONFLICT(path) DO UPDATE SET
+      negotiation_id = excluded.negotiation_id,
+      content_sha256 = excluded.content_sha256
+  `).run(filePath, negotiationId, contentSha256);
+}
+
+export function deleteNegotiationSession(filePath: string) {
+  db.prepare("DELETE FROM negotiation_sessions WHERE path = ?").run(filePath);
+}
+
+/** Reserved for future local signature caching. */
 export function getSigCache(_hash: string) {
   return [] as { block_index: number; weak_hash: number; strong_hash: string; offset_val: number; length_val: number }[];
 }

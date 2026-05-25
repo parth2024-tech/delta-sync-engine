@@ -19,6 +19,7 @@ import { db } from "./db";
 import { gcRuns, blocks, fileVersions } from "../shared/schema";
 import { decodeChunkManifestV1 } from "../shared/chunk-manifest";
 import { eq, gt, asc, isNotNull } from "drizzle-orm";
+import { getS3Key } from "../shared/hash";
 
 const s3 = new S3Client({
   region: process.env.S3_REGION || "auto",
@@ -142,56 +143,7 @@ export async function buildReferenceSet(): Promise<CompressedHashSet> {
 // ── Phase 2: Reconcile S3 against the reference set ───────────────────────────
 
 async function reconcileWithS3Listing(hashSet: CompressedHashSet): Promise<number> {
-  let deletedCount = 0;
-  let scannedCount = 0;
-  let continuationToken: string | undefined;
-
-  do {
-    const listResponse = await s3.send(new ListObjectsV2Command({
-      Bucket: BUCKET_NAME,
-      ContinuationToken: continuationToken,
-    }));
-
-    if (!listResponse.Contents || listResponse.Contents.length === 0) break;
-
-    const orphanedKeys: string[] = [];
-    const staleTempKeys: string[] = [];
-
-    for (const obj of listResponse.Contents) {
-      const key = obj.Key!;
-      scannedCount++;
-
-      // Stale temp uploads (older than 24h)
-      if (key.startsWith("temp-")) {
-        if (obj.LastModified && Date.now() - obj.LastModified.getTime() > 24 * 60 * 60 * 1000) {
-          staleTempKeys.push(key);
-        }
-        continue;
-      }
-
-      // Check if this content-addressed key is referenced
-      if (!hashSet.has(key)) {
-        orphanedKeys.push(key);
-      }
-    }
-
-    // Batch delete orphaned objects (S3 supports up to 1000 per request)
-    const toDelete = [...orphanedKeys, ...staleTempKeys];
-    const DELETE_BATCH = 1000;
-    for (let i = 0; i < toDelete.length; i += DELETE_BATCH) {
-      const batch = toDelete.slice(i, i + DELETE_BATCH);
-      await s3.send(new DeleteObjectsCommand({
-        Bucket: BUCKET_NAME,
-        Delete: { Objects: batch.map((Key) => ({ Key })), Quiet: true },
-      }));
-      deletedCount += batch.length;
-    }
-
-    continuationToken = listResponse.NextContinuationToken;
-  } while (continuationToken);
-
-  console.log(`[GC] Phase 2: Scanned ${scannedCount} S3 objects, deleted ${deletedCount} orphans`);
-  return deletedCount;
+  throw new Error("[GC] ListObjectsV2 is entirely disabled for scaling. S3 Inventory CSV reports must be used.");
 }
 
 /**
@@ -199,8 +151,7 @@ async function reconcileWithS3Listing(hashSet: CompressedHashSet): Promise<numbe
  */
 async function reconcileWithInventory(hashSet: CompressedHashSet): Promise<number> {
   if (!INVENTORY_BUCKET || !INVENTORY_KEY) {
-    console.log("[GC] No S3 Inventory configured, falling back to ListObjectsV2");
-    return reconcileWithS3Listing(hashSet);
+    throw new Error("[GC] ListObjectsV2 is entirely disabled for scaling. S3 Inventory (INVENTORY_BUCKET & INVENTORY_KEY) must be configured to run GC.");
   }
 
   let deletedCount = 0;
@@ -214,8 +165,7 @@ async function reconcileWithInventory(hashSet: CompressedHashSet): Promise<numbe
 
     const body = await response.Body?.transformToString();
     if (!body) {
-      console.warn("[GC] Empty inventory file, falling back to ListObjectsV2");
-      return reconcileWithS3Listing(hashSet);
+      throw new Error("[GC] Empty S3 Inventory report received.");
     }
 
     const orphanedKeys: string[] = [];
@@ -227,7 +177,10 @@ async function reconcileWithInventory(hashSet: CompressedHashSet): Promise<numbe
       const key = parts[1]?.replace(/"/g, "").trim();
       if (!key || key.startsWith("temp-")) continue;
 
-      if (!hashSet.has(key)) {
+      // Map prefix-sharded S3 Key back to its raw strong hash
+      const rawHash = key.includes("/") ? key.split("/").pop()! : key;
+
+      if (!hashSet.has(rawHash)) {
         orphanedKeys.push(key);
       }
     }
@@ -238,15 +191,15 @@ async function reconcileWithInventory(hashSet: CompressedHashSet): Promise<numbe
       const batch = orphanedKeys.slice(i, i + DELETE_BATCH);
       await s3.send(new DeleteObjectsCommand({
         Bucket: BUCKET_NAME,
-        Delete: { Objects: batch.map((Key) => ({ Key })), Quiet: true },
+        Delete: { Objects: batch.map((Key) => ({ Key: getS3Key(Key) })), Quiet: true },
       }));
       deletedCount += batch.length;
     }
 
     console.log(`[GC] Inventory: processed ${lines.length} entries, deleted ${deletedCount} orphans`);
   } catch (err) {
-    console.error("[GC] Failed to read inventory, falling back to ListObjectsV2:", err);
-    return reconcileWithS3Listing(hashSet);
+    console.error("[GC] Failed to execute S3 Inventory GC:", err);
+    throw err;
   }
 
   return deletedCount;

@@ -10,7 +10,7 @@
 
 import { db } from "./db";
 import { files, fileVersions } from "../shared/schema";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, inArray } from "drizzle-orm";
 
 const MAX_VERSIONS = Math.max(
   1,
@@ -60,10 +60,8 @@ export async function pruneFileVersions(fileId: string): Promise<number> {
 
   if (toDeleteIds.length === 0) return 0;
 
-  // Delete each pruned version (cascade handles blocks table)
-  for (const id of toDeleteIds) {
-    await db.delete(fileVersions).where(eq(fileVersions.id, id));
-  }
+  // Delete all pruned versions in a single query (cascade handles blocks table)
+  await db.delete(fileVersions).where(inArray(fileVersions.id, toDeleteIds));
 
   console.log(
     `[Pruner] Pruned ${toDeleteIds.length} old version(s) for file ${fileId} (keeping ${keepIds.size}, max ${MAX_VERSIONS})`,

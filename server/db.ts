@@ -25,8 +25,9 @@ function createSqliteDb() {
   }
   const sqlite = new Database(path.join(dbDir, "sqlite.db"));
   sqlite.pragma("journal_mode = WAL");
-  // Enable busy timeout for concurrent access
-  sqlite.pragma("busy_timeout = 5000");
+  sqlite.pragma("synchronous = NORMAL");
+  // Enable aggressive busy timeout for concurrent access
+  sqlite.pragma("busy_timeout = 10000");
   return drizzle(sqlite, { schema });
 }
 

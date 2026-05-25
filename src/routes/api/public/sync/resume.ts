@@ -13,6 +13,7 @@ import { validateApiKey } from "@/lib/api-key-auth";
 import { createS3Limiter } from "../../../../../server/s3-limiter";
 import { getNegotiation } from "../../../../../server/negotiation-store";
 import { z } from "zod";
+import { getS3Key } from "../../../../../shared/hash";
 
 import {
   S3Client,
@@ -43,7 +44,7 @@ const resumeSchema = z.object({
 async function blockExists(key: string): Promise<boolean> {
   try {
     await s3Limited(() =>
-      s3.send(new HeadObjectCommand({ Bucket: BUCKET_NAME, Key: key })),
+      s3.send(new HeadObjectCommand({ Bucket: BUCKET_NAME, Key: getS3Key(key) })),
     );
     return true;
   } catch (e: unknown) {
@@ -105,7 +106,7 @@ export const Route = createFileRoute("/api/public/sync/resume")({
             s3,
             new PutObjectCommand({
               Bucket: BUCKET_NAME,
-              Key: hash,
+              Key: getS3Key(hash),
               ContentType: "application/octet-stream",
             }),
             { expiresIn: PRESIGN_EXPIRY },

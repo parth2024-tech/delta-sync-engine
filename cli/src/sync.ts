@@ -14,6 +14,7 @@ import { readConfig } from "./config.js";
 import { getFile, upsertFile, listFiles as listCachedFiles } from "./db.js";
 import { contentHash } from "./rsync.js";
 import * as api from "./api.js";
+import { performPush } from "./push.js";
 
 export interface SyncResult {
   pushed: string[];
@@ -83,8 +84,13 @@ async function syncFile(
   // Case 3: Only local changed → push
   if (localChanged && !serverChanged) {
     console.log(`  ↑ ${filePath} — local changes, pushing…`);
-    // Delegate to the existing push command logic
-    return "pushed";
+    try {
+      await performPush(filePath, cfg);
+      return "pushed";
+    } catch (err) {
+      console.error(`  ✗ Failed to push ${filePath}:`, err);
+      return "conflicts";
+    }
   }
 
   // Case 4: Only server changed → pull
@@ -106,7 +112,13 @@ async function syncFile(
   if (localChanged && serverChanged) {
     if (opts.forcePush) {
       console.log(`  ⚠ ${filePath} — conflict resolved: force-push`);
-      return "pushed";
+      try {
+        await performPush(filePath, cfg);
+        return "pushed";
+      } catch (err) {
+        console.error(`  ✗ Failed to force-push ${filePath}:`, err);
+        return "conflicts";
+      }
     }
     if (opts.forcePull) {
       console.log(`  ⚠ ${filePath} — conflict resolved: force-pull`);

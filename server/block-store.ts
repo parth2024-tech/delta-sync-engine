@@ -15,6 +15,7 @@ import {
   NoSuchKey,
 } from "@aws-sdk/client-s3";
 import { getS3Client } from "./s3-client";
+import { getS3Key } from "../shared/hash";
 import logger from "pino";
 
 const log = logger();
@@ -42,7 +43,7 @@ export async function storeBlock(hash: string, data: Uint8Array): Promise<void> 
     await s3.send(
       new PutObjectCommand({
         Bucket: BUCKET_NAME,
-        Key: hash,
+        Key: getS3Key(hash),
         Body: data,
         ContentLength: data.length,
       }),
@@ -83,7 +84,7 @@ export async function fetchBlock(hash: string): Promise<Uint8Array> {
     const response = await s3.send(
       new GetObjectCommand({
         Bucket: BUCKET_NAME,
-        Key: hash,
+        Key: getS3Key(hash),
       }),
     );
 
@@ -133,7 +134,7 @@ export async function hasBlock(hash: string): Promise<boolean> {
     await s3.send(
       new HeadObjectCommand({
         Bucket: BUCKET_NAME,
-        Key: hash,
+        Key: getS3Key(hash),
       }),
     );
     return true;

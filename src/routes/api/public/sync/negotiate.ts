@@ -22,6 +22,7 @@ import { loadVersionChunks } from "../../../../../server/version-chunks";
 import { createS3Limiter } from "../../../../../server/s3-limiter";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
+import { getS3Key } from "../../../../../shared/hash";
 
 import {
   S3Client,
@@ -70,7 +71,7 @@ const negotiateSchema = z.object({
 async function blockExists(key: string): Promise<boolean> {
   try {
     await s3Limited(() =>
-      s3.send(new HeadObjectCommand({ Bucket: BUCKET_NAME, Key: key })),
+      s3.send(new HeadObjectCommand({ Bucket: BUCKET_NAME, Key: getS3Key(key) })),
     );
     return true;
   } catch (e: unknown) {
@@ -170,7 +171,7 @@ export const Route = createFileRoute("/api/public/sync/negotiate")({
             s3,
             new PutObjectCommand({
               Bucket: BUCKET_NAME,
-              Key: hash, // content-addressed: upload directly to final key
+              Key: getS3Key(hash), // content-addressed: upload directly to final key
               ContentType: "application/octet-stream",
             }),
             { expiresIn: PRESIGN_EXPIRY },

@@ -15,3 +15,8 @@ export async function sha256Hex(data: Uint8Array): Promise<string> {
   const buf = await crypto.subtle.digest("SHA-256", copy);
   return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
+
+export function getS3Key(hash: string): string {
+  if (hash.startsWith("temp-")) return hash;
+  return `${hash.substring(0, 2)}/${hash}`;
+}

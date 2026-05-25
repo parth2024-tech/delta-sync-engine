@@ -13,6 +13,7 @@ import { db } from "./db";
 import { fileVersions, outboxEvents } from "../shared/schema";
 import { iterateManifestHashPages } from "../shared/chunk-manifest";
 import { eq } from "drizzle-orm";
+import { getS3Key } from "../shared/hash";
 import {
   S3Client,
   HeadObjectCommand,
@@ -65,7 +66,7 @@ export async function handleVerifyChunks(versionId: string) {
       const results = await Promise.all(
         batch.map(async (hash) => {
           try {
-            await s3.send(new HeadObjectCommand({ Bucket: BUCKET_NAME, Key: hash }));
+            await s3.send(new HeadObjectCommand({ Bucket: BUCKET_NAME, Key: getS3Key(hash) }));
             return { hash, exists: true };
           } catch {
             return { hash, exists: false };
@@ -142,7 +143,7 @@ export async function handleCleanupFile(payload: { fileId: string; chunkHashes?:
       await s3.send(new DeleteObjectsCommand({
         Bucket: BUCKET_NAME,
         Delete: {
-          Objects: batch.map((Key) => ({ Key })),
+          Objects: batch.map((hash) => ({ Key: getS3Key(hash) })),
           Quiet: true,
         },
       }));

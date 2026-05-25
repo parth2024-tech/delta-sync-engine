@@ -12,8 +12,9 @@
 
 import { db } from "./db";
 import { outboxEvents } from "../shared/schema";
-import { isNull, asc, eq } from "drizzle-orm";
+import { isNull, asc, eq, inArray } from "drizzle-orm";
 import { handleVerifyChunks, handleCleanupFile, runGarbageCollection } from "./worker";
+import { workerPool } from "./worker-pool";
 
 const POLL_INTERVAL_MS = parseInt(process.env.OUTBOX_POLL_MS || "2000", 10);
 const BATCH_SIZE = 50;
@@ -37,6 +38,7 @@ async function pollAndDispatch(): Promise<number> {
   if (events.length === 0) return 0;
 
   let dispatched = 0;
+  const processedIds: string[] = [];
 
   for (const event of events) {
     try {
@@ -44,7 +46,8 @@ async function pollAndDispatch(): Promise<number> {
 
       // Execute directly based on event type
       if (event.eventType === "FILE_VERSION_CREATED" || event.eventType === "CHUNK_VERIFICATION") {
-        await handleVerifyChunks(payload.versionId);
+        const totalBlocks = payload.totalBlocks ?? 0;
+        await workerPool.submit(payload.versionId, totalBlocks);
       } else if (event.eventType === "FILE_DELETED") {
         await handleCleanupFile(payload);
       } else if (event.eventType === "GC_REQUESTED") {
@@ -59,15 +62,18 @@ async function pollAndDispatch(): Promise<number> {
         console.warn(`[OutboxDispatcher] Unknown event type: ${event.eventType}`);
       }
 
-      // Mark as processed
-      await db.update(outboxEvents)
-        .set({ processedAt: new Date() })
-        .where(eq(outboxEvents.id, event.id));
-
+      processedIds.push(event.id);
       dispatched++;
     } catch (err) {
       console.error(`[OutboxDispatcher] Failed to dispatch event ${event.id}:`, err);
     }
+  }
+
+  if (processedIds.length > 0) {
+    // Mark all successfully processed events as processed in a single query
+    await db.update(outboxEvents)
+      .set({ processedAt: new Date() })
+      .where(inArray(outboxEvents.id, processedIds));
   }
 
   if (dispatched > 0) {

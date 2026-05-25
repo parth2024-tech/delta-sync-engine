@@ -109,3 +109,59 @@ export async function getFileInfo(cfg: Config, path: string): Promise<FileInfo |
   if (!r.ok) throw new Error(await r.text());
   return r.json() as Promise<FileInfo | null>;
 }
+
+export interface NegotiateResponse {
+  negotiationId: string;
+  missingChunks: { index: number; strongHash: string; uploadUrl: string }[];
+  totalChunks: number;
+  existingChunks: number;
+  presignExpiry: number;
+}
+
+export async function negotiate(
+  cfg: Config,
+  body: {
+    path: string;
+    chunking: "cdc" | "fixed";
+    blockSize: number;
+    newSize: number;
+    contentSha256: string;
+    chunks: { strongHash: string; length: number; weakHash?: number }[];
+  }
+): Promise<NegotiateResponse> {
+  const r = await fetch(`${cfg.serverUrl}/api/public/sync/negotiate`, {
+    method: "POST",
+    headers: { ...authHeader(cfg), "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json() as Promise<NegotiateResponse>;
+}
+
+export interface ResumeResponse {
+  negotiationId: string;
+  missingChunks: { strongHash: string; uploadUrl: string }[];
+  totalChunks: number;
+  alreadyUploaded: number;
+  presignExpiry: number;
+}
+
+export async function resumeNegotiation(cfg: Config, negotiationId: string): Promise<ResumeResponse> {
+  const r = await fetch(`${cfg.serverUrl}/api/public/sync/resume`, {
+    method: "POST",
+    headers: { ...authHeader(cfg), "Content-Type": "application/json" },
+    body: JSON.stringify({ negotiationId }),
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json() as Promise<ResumeResponse>;
+}
+
+export async function commitSync(cfg: Config, negotiationId: string): Promise<{ versionNo: number; bytesSaved: number }> {
+  const r = await fetch(`${cfg.serverUrl}/api/public/sync/commit`, {
+    method: "POST",
+    headers: { ...authHeader(cfg), "Content-Type": "application/json" },
+    body: JSON.stringify({ negotiationId }),
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json() as Promise<{ versionNo: number; bytesSaved: number }>;
+}
