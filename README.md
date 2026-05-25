@@ -18,10 +18,14 @@ Deltasync is a high-performance delta-based file synchronization engine. It uses
 *   **Containerized Compute Layer**: Ready-to-deploy multistage `Dockerfile` specifically optimized for the Bun/Vite/TanStack environment.
 *   **Automated CI/CD Pipeline**: GitHub Actions workflow (`.github/workflows/ci.yml`) automatically spins up testing services (PostgreSQL/Redis), runs Vitest suites, builds the Docker image, pushes to ECR, and triggers blue/green deployments to AWS ECS.
 *   **In-Memory Rate Limiting**: Centralized rate limiter (`server/s3-limiter.ts`) restricts clients to 60 requests/minute using a simple token bucket.
-*   **Security Hardening**:
-    *   Strict `JWT_SECRET` requirement (halts startup if missing) powered by `jose`.
-    *   Zod-level logical path traversal prevention (`../`, `./`, `/`).
-    *   Strict payload size caps (500MB limit).
+*   **Enterprise-Grade Security Hardening**:
+    *   **Cryptographically Secure API Keys**: Upgraded from simple UUIDs to 256-bit secure keys generated with the `dks_` prefix, hashed via one-way SHA-256, and validated using constant-time timing-safe comparisons to eliminate timing attack vectors.
+    *   **Automated Environment Validation**: A startup validation engine (`server/environment.ts`) that runs immediately at launch to inspect all environment variables and halt execution if default/development credentials (like the default `JWT_SECRET`) are used in a production context.
+    *   **Robust Security Headers**: Native middleware (`server/security-headers.ts`) that configures essential modern protection headers including Strict-Transport-Security (HSTS), Content-Security-Policy (CSP), X-Frame-Options (DENY), X-Content-Type-Options (nosniff), legacy XSS Protection, and proper CORS rules.
+    *   **Database-Backed Negotiation Store**: Migrated the critical rolling hash negotiation store from memory to an index-optimized SQLite table (`negotiations` in `shared/schema.ts` and `server/negotiation-store-db.ts`), allowing seamless horizontal scaling across multi-instance nodes with automatic TTL-based expired record cleanups.
+    *   **Structured Context Logging**: Powered by Pino with correlation tracking, providing secure, production-level diagnostic trails without risk of exposing credentials or PII.
+    *   **Secure Password Hashing**: Enforces strict password validation rules (minimum 8 characters) and hashes secrets using 12 bcrypt rounds.
+    *   **Additional Controls**: Strict Zod schemas for path traversal prevention (`../`, `./`), null byte rejection, and strict payload size limits (500MB).
 
 ## 🛠 Tech Stack
 
@@ -30,10 +34,22 @@ Deltasync is a high-performance delta-based file synchronization engine. It uses
 *   **Backend Runtime**: Node.js (via Vite Dev Server / TanStack Server)
 *   **Native Layer**: Rust (NAPI-RS + Rayon thread pool)
 *   **Database**: SQLite (`better-sqlite3`), Drizzle ORM
-*   **Storage**: S3-Compatible Object Storage (`@aws-sdk/client-s3`)
+*   **Storage**: S3-Compatible Object Storage (`@aws-sdk/client-s3` upgraded to `v3.600.0` for connection pooling/security)
 *   **Wire Format**: FlatBuffer-style DSO2 binary protocol (`ops.fbs.ts`)
-*   **Testing**: Vitest
+*   **Logging**: Pino (Structured JSON logging)
+*   **Testing**: Vitest (Comprehensive API handlers & Authentication tests with 600+ LOC and 85+ assertions)
 *   **Infrastructure**: Docker, GitHub Actions
+
+## 📚 Comprehensive Documentation
+
+Deltasync comes with extensive production-ready manuals located in the `docs/` directory to help you deploy, secure, and integrate with the platform:
+
+*   **[API Reference (docs/API.md)](./docs/API.md)**: Full reference for authentication modes (session cookies vs. `dks_` API keys), sync/negotiation protocols, error payloads, and rate limits.
+*   **[Environment Variables Reference (docs/ENVIRONMENT.md)](./docs/ENVIRONMENT.md)**: Detailed configuration guide outlining required vs optional variables, example config blocks for development and production, and troubleshooting validation errors.
+*   **[Security Hardening Guide (docs/SECURITY.md)](./docs/SECURITY.md)**: Complete security architecture handbook, checklist for production deployment, secret management, JWT rotation, database encryption, and incident response procedures.
+*   **[Deployment Guide (docs/DEPLOYMENT.md)](./docs/DEPLOYMENT.md)**: Step-by-step setup guides for Local, Docker, multi-pod Kubernetes (with YAML examples), and AWS ECS (Fargate) deployments.
+*   **[Audit & Fixes Summary (FIXES_SUMMARY.md)](./FIXES_SUMMARY.md)**: High-level technical overview detailing the exact resolutions and code blocks for all 20 critical, high, and medium security/quality issues resolved in the latest release.
+*   **[Fixes Index (FIXES_INDEX.md)](./FIXES_INDEX.md)**: Quick-reference directory index of all codebase modifications, unit test coverage, and deployment readiness checklists.
 
 ## 📦 Prerequisites
 
@@ -63,30 +79,17 @@ Deltasync is a high-performance delta-based file synchronization engine. It uses
     ```
 
 4.  **Configure Environment Variables:**
-    Create a `.env` file in the root directory:
-    ```env
-    # Security (Must be set, no default fallback)
-    JWT_SECRET=your_super_secret_jwt_string
-
-    # S3 Object Storage Configuration
-    S3_REGION=auto
-    S3_ENDPOINT=https://your-s3-endpoint.com
-    S3_ACCESS_KEY_ID=your_access_key
-    S3_SECRET_ACCESS_KEY=your_secret_key
-    S3_BUCKET_NAME=deltasync-blocks
-    S3_UPLOAD_CONCURRENCY=12
-
-    # S3 Inventory (for offline GC — optional)
-    S3_INVENTORY_BUCKET=
-    S3_INVENTORY_KEY=
-
-    # Outbox Dispatcher
-    OUTBOX_POLL_MS=2000
-
-    # Observability
-    LOG_LEVEL=info
-    NODE_ENV=development
+    Copy the provided `.env.example` file to `.env` and configure your credentials:
+    ```bash
+    cp .env.example .env
     ```
+    Ensure you generate a secure cryptographically strong secret for production JWT:
+    ```bash
+    # Example to generate a strong key
+    openssl rand -base64 32
+    ```
+    
+    All critical variables (such as database type, S3 connection details, and JWT secrets) are validated at launch by the startup environment validation engine. Refer to the **[Environment Guide (docs/ENVIRONMENT.md)](./docs/ENVIRONMENT.md)** for a comprehensive explanation of every configuration parameter and deployment target.
 
 5.  **Run Database Migrations:**
     ```bash

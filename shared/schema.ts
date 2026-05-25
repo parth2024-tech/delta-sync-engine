@@ -131,6 +131,23 @@ export const gcRuns = sqliteTable("gc_runs", {
   finishedAt:   integer("finished_at", { mode: 'timestamp_ms' }),
 });
 
+export const negotiations = sqliteTable("negotiations", {
+  id:                 text("id").primaryKey(),
+  userId:             text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  path:               text("path").notNull(),
+  chunking:           text("chunking").notNull().$type<"cdc" | "fixed">(),
+  blockSize:          integer("block_size").notNull(),
+  newSize:            integer("new_size").notNull(),
+  contentSha256:      text("content_sha256").notNull(),
+  chunks:             blob("chunks", { mode: "buffer" }).notNull(), // Packed chunk data
+  snapshotVersionId:  text("snapshot_version_id"),
+  expiresAt:          integer("expires_at", { mode: 'timestamp_ms' }).notNull(),
+  createdAt:          integer("created_at", { mode: 'timestamp_ms' }).$defaultFn(() => new Date()).notNull(),
+}, (t) => [
+  index("negotiations_expires_at_idx").on(t.expiresAt),
+  index("negotiations_user_idx").on(t.userId),
+]);
+
 export type User         = typeof users.$inferSelect;
 export type InsertUser   = typeof users.$inferInsert;
 export type File         = typeof files.$inferSelect;
@@ -140,3 +157,4 @@ export type SyncJob      = typeof syncJobs.$inferSelect;
 export type ApiKey       = typeof apiKeys.$inferSelect;
 export type OutboxEvent  = typeof outboxEvents.$inferSelect;
 export type GcRun        = typeof gcRuns.$inferSelect;
+export type Negotiation  = typeof negotiations.$inferSelect;
