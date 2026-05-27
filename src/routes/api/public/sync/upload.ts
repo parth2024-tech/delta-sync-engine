@@ -72,6 +72,7 @@ const s3Limited = createS3Limiter(
 );
 
 import { checkRateLimit } from "../../../../../server/rate-limiter";
+import { outboxNotifier } from "../../../../../server/outbox-notifier";
 
 async function blockExists(key: string): Promise<boolean> {
   try {
@@ -348,6 +349,9 @@ export const Route = createFileRoute("/api/public/sync/upload")({
           }
           throw err;
         }
+
+        // Notify outbox dispatcher of new event
+        outboxNotifier.emitInserted();
 
         // Fire version pruner asynchronously (non-blocking)
         if (returnVal.versionNo > 0) {

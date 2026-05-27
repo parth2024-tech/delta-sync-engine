@@ -14,6 +14,7 @@ import { fileVersions, outboxEvents } from "../shared/schema";
 import { iterateManifestHashPages } from "../shared/chunk-manifest";
 import { eq } from "drizzle-orm";
 import { getS3Key } from "../shared/hash";
+import { outboxNotifier } from "./outbox-notifier";
 import {
   S3Client,
   HeadObjectCommand,
@@ -97,6 +98,8 @@ export async function handleVerifyChunks(versionId: string) {
         missingCount: missingHashes.length,
       }),
     });
+
+    outboxNotifier.emitInserted();
 
     console.error(
       `[Worker:verify-chunks] ⚠ Version ${versionId} CORRUPTED: ${missingHashes.length}/${totalUniqueHashes} chunks missing in S3`,

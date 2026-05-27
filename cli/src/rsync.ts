@@ -9,10 +9,51 @@
  *   > 10 MB → CDC with 64 KiB average (fewer chunks, faster hashing)
  */
 
+import { createRequire } from "node:module";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { cdcRanges } from "../../shared/fastcdc.js";
 import { adler32, sha256Hex } from "../../shared/hash.js";
 
 export { encodeOpsBinaryV1 } from "../../shared/ops-binary.js";
+
+const require = createRequire(import.meta.url);
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+function getNativeAddon() {
+  const potentialPaths = [
+    // In dev mode running from cli/src/rsync.ts
+    path.join(__dirname, "../../../native/deltasync-native.node"),
+    // In compiled dist mode running from cli/dist/cli/src/rsync.js
+    path.join(__dirname, "../../../../native/deltasync-native.node"),
+    // Relative to execution directory
+    path.join(process.cwd(), "native/deltasync-native.node"),
+  ];
+
+  for (const p of potentialPaths) {
+    try {
+      const addon = require(p);
+      return {
+        isNative: true,
+        cdcChunkAndHash: addon.cdcChunkAndHash,
+        adler32Native: addon.adler32Native,
+        sha256Native: addon.sha256Native,
+      };
+    } catch {
+      // Ignore and try next path
+    }
+  }
+
+  return {
+    isNative: false,
+    cdcChunkAndHash: null as any,
+    adler32Native: null as any,
+    sha256Native: null as any,
+  };
+}
+
+const nativeAddon = getNativeAddon();
 
 /** Files smaller than this skip CDC entirely and use whole-file hash comparison. */
 export const SMALL_FILE_THRESHOLD = 32 * 1024; // 32 KB
@@ -55,6 +96,21 @@ export interface BuildSigOpts {
 }
 
 export async function buildSignatures(data: Buffer, opts: BuildSigOpts): Promise<Signature[]> {
+  if (nativeAddon.isNative && opts.chunking === "cdc") {
+    try {
+      const res = await nativeAddon.cdcChunkAndHash(data, opts.blockSize);
+      return res.chunks.map((c: any) => ({
+        blockIndex: c.blockIndex,
+        weakHash: c.weakHash,
+        strongHash: c.strongHashHex,
+        offset: c.offset,
+        length: c.length,
+      }));
+    } catch (err) {
+      console.warn("[CLI:Rsync] Native signature calculation failed, falling back to JS:", err);
+    }
+  }
+
   if (opts.chunking === "fixed") {
     const blockSize = opts.blockSize;
     const sigs: Signature[] = [];
@@ -64,8 +120,8 @@ export async function buildSignatures(data: Buffer, opts: BuildSigOpts): Promise
       const chunk = data.subarray(offset, end);
       sigs.push({
         blockIndex: idx++,
-        weakHash:   adler32(chunk),
-        strongHash: await sha256Hex(chunk),
+        weakHash:   nativeAddon.isNative ? nativeAddon.adler32Native(chunk) : adler32(chunk),
+        strongHash: nativeAddon.isNative ? await nativeAddon.sha256Native(chunk) : await sha256Hex(chunk),
         offset,
         length: end - offset,
       });
@@ -87,8 +143,8 @@ export async function buildSignatures(data: Buffer, opts: BuildSigOpts): Promise
     const chunk = data.subarray(start, end);
     sigs.push({
       blockIndex: idx++,
-      weakHash:   adler32(chunk),
-      strongHash: await sha256Hex(chunk),
+      weakHash:   nativeAddon.isNative ? nativeAddon.adler32Native(chunk) : adler32(chunk),
+      strongHash: nativeAddon.isNative ? await nativeAddon.sha256Native(chunk) : await sha256Hex(chunk),
       offset:     start,
       length:     end - start,
     });
@@ -143,11 +199,12 @@ async function computeDeltaFixed(
   };
 
   while (i <= newData.length - blockSize) {
-    const weak = adler32(newData.subarray(i, i + blockSize));
+    const slice = newData.subarray(i, i + blockSize);
+    const weak = nativeAddon.isNative ? nativeAddon.adler32Native(slice) : adler32(slice);
     const candidates = weakMap.get(weak16(weak));
 
     if (candidates) {
-      const strong = await sha256Hex(newData.subarray(i, i + blockSize));
+      const strong = nativeAddon.isNative ? await nativeAddon.sha256Native(slice) : await sha256Hex(slice);
       const match = candidates.find((c) => c.weakHash === weak && c.strongHash === strong);
       if (match) {
         flushLiteral(i);
@@ -190,8 +247,8 @@ async function computeDeltaCdc(
 
   for (const { start, end } of ranges) {
     const slice = newData.subarray(start, end);
-    const weak = adler32(slice);
-    const strong = await sha256Hex(slice);
+    const weak = nativeAddon.isNative ? nativeAddon.adler32Native(slice) : adler32(slice);
+    const strong = nativeAddon.isNative ? await nativeAddon.sha256Native(slice) : await sha256Hex(slice);
     const candidates = weakMap.get(weak16(weak));
     const match = candidates?.find(
       (c) => c.weakHash === weak && c.strongHash === strong && c.length === slice.length,
@@ -210,5 +267,5 @@ async function computeDeltaCdc(
 }
 
 export async function contentHash(data: Buffer): Promise<string> {
-  return sha256Hex(data);
+  return nativeAddon.isNative ? nativeAddon.sha256Native(data) : sha256Hex(data);
 }

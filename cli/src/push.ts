@@ -142,35 +142,107 @@ export async function performPush(
       return { ...c, offset: sig.offset, length: sig.length };
     });
 
-    await parallelLimit(uploadsWithMetadata, UPLOAD_CONCURRENCY, async (chunk) => {
-      const chunkData = data.subarray(chunk.offset, chunk.offset + chunk.length);
-      
-      let attempts = 3;
-      while (attempts > 0) {
-        try {
-          const r = await fetch(chunk.uploadUrl, {
-            method: "PUT",
-            body: chunkData,
-            headers: {
-              "Content-Type": "application/octet-stream",
-              "Content-Length": String(chunk.length),
-            },
-          });
-          if (!r.ok) throw new Error(`HTTP ${r.status} ${r.statusText}`);
-          
-          // Atomically record chunk transfer status on completion
-          recordChunkStatus(negotiationId!, chunk.strongHash, "completed");
-          break;
-        } catch (err) {
-          attempts--;
-          if (attempts === 0) {
-            console.error(`[ResumeEngine] ✗ Failed to upload chunk ${chunk.strongHash}: ${(err as Error).message}`);
-            throw err;
+    let activeLimit = UPLOAD_CONCURRENCY;
+    let consecutiveSuccesses = 0;
+    let index = 0;
+    let activeCount = 0;
+    let uploadError: Error | null = null;
+
+    const runWorker = async () => {
+      activeCount++;
+      try {
+        while (index < uploadsWithMetadata.length && !uploadError) {
+          if (activeCount > activeLimit) {
+            break;
           }
-          await new Promise(r => setTimeout(r, 1000));
+
+          const chunk = uploadsWithMetadata[index++];
+          if (!chunk) break;
+
+          const chunkData = data.subarray(chunk.offset, chunk.offset + chunk.length);
+          let attempts = 3;
+          let delayMs = 1000;
+          const startTime = Date.now();
+
+          while (attempts > 0 && !uploadError) {
+            try {
+              const r = await fetch(chunk.uploadUrl, {
+                method: "PUT",
+                body: chunkData,
+                headers: {
+                  "Content-Type": "application/octet-stream",
+                  "Content-Length": String(chunk.length),
+                },
+              });
+
+              if (r.status === 503 || r.status === 429) {
+                activeLimit = Math.max(1, activeLimit - 1);
+                consecutiveSuccesses = 0;
+                console.warn(
+                  `[S3:Concurrency] HTTP ${r.status} Slow Down detected for chunk ${chunk.strongHash}. ` +
+                  `Scaling concurrency limit down to ${activeLimit}.`
+                );
+                attempts--;
+                if (attempts > 0) {
+                  await new Promise(res => setTimeout(res, delayMs));
+                  delayMs *= 2;
+                  continue;
+                }
+                throw new Error(`S3 rate limit exceeded (HTTP ${r.status})`);
+              }
+
+              if (!r.ok) {
+                throw new Error(`HTTP ${r.status} ${r.statusText}`);
+              }
+
+              const latency = Date.now() - startTime;
+              if (latency < 400) {
+                consecutiveSuccesses++;
+                if (consecutiveSuccesses >= 5) {
+                  const prevLimit = activeLimit;
+                  activeLimit = Math.min(UPLOAD_CONCURRENCY, activeLimit + 1);
+                  if (activeLimit > prevLimit) {
+                    console.log(`[S3:Concurrency] Low latency observed (${latency}ms). Scaling concurrency limit up to ${activeLimit}.`);
+                  }
+                  consecutiveSuccesses = 0;
+                }
+              } else {
+                consecutiveSuccesses = 0;
+              }
+
+              recordChunkStatus(negotiationId!, chunk.strongHash, "completed");
+              break;
+            } catch (err) {
+              attempts--;
+              if (attempts === 0) {
+                console.error(`[ResumeEngine] ✗ Failed to upload chunk ${chunk.strongHash}: ${(err as Error).message}`);
+                uploadError = err as Error;
+                break;
+              }
+              await new Promise(res => setTimeout(res, delayMs));
+              delayMs *= 2;
+            }
+          }
+
+          while (activeCount < activeLimit && index < uploadsWithMetadata.length && !uploadError) {
+            void runWorker();
+          }
         }
+      } finally {
+        activeCount--;
       }
-    });
+    };
+
+    const initialPromises: Promise<void>[] = [];
+    for (let i = 0; i < Math.min(UPLOAD_CONCURRENCY, uploadsWithMetadata.length); i++) {
+      initialPromises.push(runWorker());
+    }
+
+    await Promise.all(initialPromises);
+
+    if (uploadError) {
+      throw uploadError;
+    }
   } else {
     console.log(`[ResumeEngine] All chunks are already uploaded to S3 staging.`);
   }

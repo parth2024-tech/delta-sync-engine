@@ -23,6 +23,7 @@ import { z } from "zod";
 
 import { getNegotiation, clearNegotiation } from "../../../../../server/negotiation-store";
 import { pruneFileVersions } from "../../../../../server/version-pruner";
+import { outboxNotifier } from "../../../../../server/outbox-notifier";
 
 const commitSchema = z.object({
   negotiationId: z.string().uuid(),
@@ -165,6 +166,9 @@ export const Route = createFileRoute("/api/public/sync/commit")({
 
         // Consume the negotiation token after successful commit
         clearNegotiation(body.negotiationId);
+
+        // Notify outbox dispatcher of new event
+        outboxNotifier.emitInserted();
 
         // Fire version pruner asynchronously (non-blocking)
         const committedFileId = returnVal.versionNo > 0 ? (await db.select({ id: files.id }).from(files).where(and(eq(files.userId, userId), eq(files.path, negotiation.path))))[0]?.id : undefined;

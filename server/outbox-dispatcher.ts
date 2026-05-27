@@ -16,6 +16,8 @@ import { isNull, asc, eq, inArray } from "drizzle-orm";
 import { handleVerifyChunks, handleCleanupFile, runGarbageCollection } from "./worker";
 import { workerPool } from "./worker-pool";
 
+import { outboxNotifier } from "./outbox-notifier";
+
 const POLL_INTERVAL_MS = parseInt(process.env.OUTBOX_POLL_MS || "2000", 10);
 const BATCH_SIZE = 50;
 
@@ -23,6 +25,13 @@ const BATCH_SIZE = 50;
 const GC_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 let running = true;
+let wakeupResolve: (() => void) | null = null;
+
+function wakeup() {
+  if (wakeupResolve) {
+    wakeupResolve();
+  }
+}
 
 async function pollAndDispatch(): Promise<number> {
   // Use a transaction to atomically claim events for processing.
@@ -90,10 +99,11 @@ async function scheduleGc() {
     aggregateId: "scheduled",
     payload: JSON.stringify({ trigger: "daily-timer", scheduledAt: new Date().toISOString() }),
   });
+  outboxNotifier.emitInserted();
 }
 
 async function runDispatcherLoop() {
-  console.log(`[OutboxDispatcher] Started Lite Mode — polling every ${POLL_INTERVAL_MS}ms`);
+  console.log(`[OutboxDispatcher] Started Lite Mode — polling every ${POLL_INTERVAL_MS}ms (with instant event wakeup)`);
 
   // Schedule daily GC timer
   const gcTimer = setInterval(() => {
@@ -101,14 +111,30 @@ async function runDispatcherLoop() {
   }, GC_INTERVAL_MS);
   gcTimer.unref();
 
+  // Register immediate wakeup on new event insertion
+  outboxNotifier.on("inserted", wakeup);
+
   while (running) {
     try {
       await pollAndDispatch();
     } catch (err) {
       console.error("[OutboxDispatcher] Poll error:", err);
     }
-    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+    if (!running) break;
+
+    await new Promise<void>((resolve) => {
+      wakeupResolve = () => {
+        wakeupResolve = null;
+        clearTimeout(timeoutId);
+        resolve();
+      };
+      const timeoutId = setTimeout(() => {
+        wakeupResolve = null;
+        resolve();
+      }, POLL_INTERVAL_MS);
+    });
   }
+  outboxNotifier.off("inserted", wakeup);
   clearInterval(gcTimer);
   console.log("[OutboxDispatcher] Shutting down...");
 }
