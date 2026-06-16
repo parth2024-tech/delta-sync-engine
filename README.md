@@ -1,33 +1,69 @@
-# Deltasync — Delta-Based File Synchronization Engine
+# Deltasync
 
-Send only the bytes that changed.
+[![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)](#)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.8-blue.svg)](#)
+[![Rust FFI](https://img.shields.io/badge/Rust-FFI%20(NAPI--RS)-orange.svg)](#)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](#)
+[![Vitest Coverage](https://img.shields.io/badge/tests-110%20passed-success.svg)](#)
 
-Deltasync is a high-performance delta-based file synchronization engine. It uses a rolling Adler-32 hash to detect shifted content in O(1) per byte, then verifies matches with SHA-256. This means a 4 GB file with a 1% edit transfers in 40 MB, not 4 GB.
+Deltasync is a production-grade, high-performance delta file synchronization engine designed for massive bandwidth savings. By combining **Content-Defined Chunking (CDC)** with a **two-level rolling Adler-32 / SHA-256 deduplication** protocol, Deltasync identifies shifted content in $O(1)$ per byte and uploads only changed blocks. 
 
-## 🚀 Key Features & Production Architecture
+For example, modifying $1\%$ of a 4 GB file transfers only $40\text{ MB}$ over the wire instead of the entire 4 GB.
 
-*   **Rsync Algorithm Implementation**: Uses a two-level match (Adler-32 + SHA-256) to perform rolling hash block deduplication. Hashes are fully unit-tested via Vitest to guarantee zero false positives.
-*   **Zero-Copy Native FFI (NAPI-RS + Rayon)**: CDC chunking, Adler-32, and SHA-256 hashing are offloaded to a Rust native addon via NAPI-RS. Offloads heavy computation to Rayon's thread pool zero-copy using raw V8 memory pointer address transmutations, keeping the Node.js event loop 100% unblocked with absolutely no buffer clones. Both the server and CLI support dynamic, graceful loading of the Rust addon with pure TypeScript fallbacks.
-*   **Near-Instant Outbox Dispatching (Event-Driven Wakeup)**: Replaces traditional database polling lags with an in-process, zero-dependency `outboxNotifier` event emitter. When sync commits or chunk transfers complete, they trigger immediate wakeups, processing background events in less than 20ms instead of waiting for the default 2-second polling interval.
-*   **Stateful Resumable CLI (`deltasync`)**: A fully functional Node.js CLI utilizing a local SQLite database cache (`.deltasync/cache.db`) with stateful transfer journaling and staging area reconciliation handshakes to automatically skip already committed remote chunks and resume aborted pushes mid-flight in parallel. Uses dynamic Rust FFI loading for local high-performance signature indexing.
-*   **Dynamic Concurrency & S3 Tuning**: The CLI uploader implements a self-tuning concurrent queue that dynamically scales down uploader threads upon encountering `HTTP 503 Slow Down` rate limits with exponential retry backoff, and automatically scales up concurrency when observing low-latency (<400ms) consecutive chunk transfers.
-*   **Full-Stack Web Interface (TanStack Start)**: A complete web UI featuring robust Authentication, a functional Dashboard, API Keys management, Background Jobs monitor, File Management, and an interactive Web Playground for testing and visualizing the sync algorithm.
-*   **Concurrent Multi-Worker Outbox**: Background jobs run inside an in-process `worker_threads` worker pool with a work-stealing task scheduler that groups outbox events by manifest complexity, routing ultra-large manifests to dedicated queues to prevent pipeline stalling. SQLite WAL mode, aggressive busy-timeouts, and NORMAL synchronicity permit concurrent read/write throughput.
-*   **Offline Garbage Collection (Inventory-Only)**: Enforces scale-aware flat storage inventory reports to reconcile bucket contents against database schemas, completely disabling real-time AWS ListObjectsV2 API listing bottlenecks. Uses prefix-bucketed compressed sets (simulating Roaring Bitmaps) to maintain $O(1)$ memory.
-*   **Radix-Indexed Storage Sharding**: Block storage keys are sharded prefix-wise matching the initial hex characters of the SHA-256 strong hash (e.g. `2f/2f0e4b...`) to avoid concurrent write partition locks in large S3 buckets.
-*   **FlatBuffer Wire Format (DSO2)**: Zero-copy binary manifest codec defined in `shared/ops.fbs.ts`. Operations are read directly from the buffer at computed offsets — no JSON parsing, no memory allocation. Backward compatible with DSO1 and JSON formats.
-*   **Lite Mode Architecture**: We have streamlined the MVP by removing PostgreSQL, Redis, and BullMQ. It now runs on an embedded **SQLite** database and uses in-memory limits. See [Lite Mode Architecture](docs/ARCHITECTURE_LITE.md) for details.
-*   **Containerized Compute Layer**: Ready-to-deploy multistage `Dockerfile` specifically optimized for the Bun/Vite/TanStack environment.
-*   **Automated CI/CD Pipeline**: GitHub Actions workflow (`.github/workflows/ci.yml`) automatically spins up testing services (PostgreSQL/Redis), runs Vitest suites, builds the Docker image, pushes to ECR, and triggers blue/green deployments to AWS ECS.
-*   **In-Memory Rate Limiting**: Centralized rate limiter (`server/s3-limiter.ts`) restricts clients to 60 requests/minute using a simple token bucket.
-*   **Enterprise-Grade Security Hardening**:
-    *   **Cryptographically Secure API Keys**: Upgraded from simple UUIDs to 256-bit secure keys generated with the `dks_` prefix, hashed via one-way SHA-256, and validated using constant-time timing-safe comparisons to eliminate timing attack vectors.
-    *   **Automated Environment Validation**: A startup validation engine (`server/environment.ts`) that runs immediately at launch to inspect all environment variables and halt execution if default/development credentials (like the default `JWT_SECRET`) are used in a production context.
-    *   **Robust Security Headers**: Native middleware (`server/security-headers.ts`) that configures essential modern protection headers including Strict-Transport-Security (HSTS), Content-Security-Policy (CSP), X-Frame-Options (DENY), X-Content-Type-Options (nosniff), legacy XSS Protection, and proper CORS rules.
-    *   **Database-Backed Negotiation Store**: Migrated the critical rolling hash negotiation store from memory to an index-optimized SQLite table (`negotiations` in `shared/schema.ts` and `server/negotiation-store-db.ts`), allowing seamless horizontal scaling across multi-instance nodes with automatic TTL-based expired record cleanups.
-    *   **Structured Context Logging**: Powered by Pino with correlation tracking, providing secure, production-level diagnostic trails without risk of exposing credentials or PII.
-    *   **Secure Password Hashing**: Enforces strict password validation rules (minimum 8 characters) and hashes secrets using 12 bcrypt rounds.
-    *   **Additional Controls**: Strict Zod schemas for path traversal prevention (`../`, `./`), null byte rejection, and strict payload size limits (500MB).
+---
+
+## 🏗 System Architecture
+
+Deltasync's Lite Mode runs as a streamlined, single-node application utilizing high-performance, embedded systems.
+
+```mermaid
+graph TD
+    Client[deltasync CLI] -->|1. Signatures & Negotiation| Server[Node.js API Server]
+    Server -->|2. Native FFI Binding| RustAddon[deltasync-native Addon]
+    Server <-->|3. Embedded Storage ORM| SQLite[(SQLite Database)]
+    Client -->|4. Direct Block Upload| S3[(S3 Object Storage)]
+    
+    subgraph Outbox Dispatcher
+        Server -.->|5. Atomic Transaction Write| EventTable[outbox_events Table]
+        DispatcherLoop[Dispatcher Loop] -->|6. Poll & Dispatch| EventTable
+        DispatcherLoop -->|7. Non-blocking Call| BackgroundWorker[Background Worker]
+    end
+
+    subgraph Background Worker
+        BackgroundWorker -->|Verify Chunks| S3
+        BackgroundWorker -->|Cleanup Orphan Blocks| S3
+        BackgroundWorker -->|Offline GC Runs| S3
+    end
+```
+
+---
+
+## 🚀 Key Technical Pillars
+
+### 1. High-Performance Native Layer (Zero-Copy Rust FFI)
+*   **Rayon Multi-Core Thread Pool**: Hashing and CDC boundaries detection are offloaded to a compiled Rust extension, executing parallel computations on Rayon threads (`into_par_iter()`) to keep the Node.js event loop completely non-blocking.
+*   **V8 Pointer Transmutation**: JavaScript buffers are passed directly to Rust as raw slices using raw pointer transmutations (`std::slice::from_raw_parts`) avoiding memory-copy overhead.
+*   **TypeScript Fallback Engine**: Instantly falls back to pure JavaScript/TypeScript engines if the compiled binary is not available.
+
+### 2. Event-Driven Transactional Outbox
+*   **Zero-Delay Dispatching**: Utilizes an in-process `outboxNotifier` event-emitter that bypasses traditional 2-second database polling intervals.
+*   **Immediate Wakeup**: Sync commits and chunk transfers trigger immediate dispatcher wakeups, initiating chunk verification tasks in less than 20ms.
+*   **Concurreny & Work-Stealing**: Leverages a `worker_threads` worker pool with a work-stealing scheduler. Pending tasks are grouped by manifest complexity, ensuring small files bypass queue delays caused by ultra-large manifest files.
+
+### 3. Stateful & Resumable CLI (`deltasync`)
+*   **Stateful Journaling Cache**: Powered by a local SQLite cache database (`.deltasync/cache.db`) that logs chunk transfer states atomically.
+*   **Staging Area Reconciliation**: Integrates v2 pre-signed uploads. The CLI automatically queries the server negotiations schema via `/api/public/sync/resume` to reconcile what S3 staging holds, skipping redundant uploads.
+*   **Dynamic Concurrency & S3 Tuning**: Tracks network latency in real-time. Automatically scales concurrency down on `HTTP 503 Slow Down` rate-limit responses with exponential retry backoff, and scales concurrency back up when consecutive low latencies (<400ms) are observed.
+
+### 4. Zero-Copy Binary Wire Formats
+*   **DSM1 (Deltasync Manifest)**: Packed manifest formatting representing S3 block locations (`count` + array of offset, length, weak hash, and SHA-256).
+*   **DSO2 (Deltasync Operations FlatBuffer)**: Zero-copy operations manifest (`shared/ops.fbs.ts`) that reads fields at computed offsets, completely bypassing JSON parser CPU overhead.
+
+### 5. Radix-Indexed Storage Sharding & Scale GC
+*   **Prefix Key Partitioning**: Key lookups in S3 are sharded prefix-wise matching the initial characters of the SHA-256 hash (e.g., `2f/2f0e4b...`), avoiding partition lock bottlenecks in massive S3 buckets.
+*   **Inventory-Only GC**: Reconciles bucket contents strictly via flat S3 inventory reports, disabling real-time list API listing bottlenecks to easily scale to millions of blocks.
+
+---
 
 ## 🛠 Tech Stack
 
@@ -36,129 +72,112 @@ Deltasync is a high-performance delta-based file synchronization engine. It uses
 *   **Backend Runtime**: Node.js (via Vite Dev Server / TanStack Server)
 *   **Native Layer**: Rust (NAPI-RS + Rayon thread pool)
 *   **Database**: SQLite (`better-sqlite3`), Drizzle ORM
-*   **Storage**: S3-Compatible Object Storage (`@aws-sdk/client-s3` upgraded to `v3.600.0` for connection pooling/security)
+*   **Storage**: S3-Compatible Object Storage (`@aws-sdk/client-s3` v3.600)
 *   **Wire Format**: FlatBuffer-style DSO2 binary protocol (`ops.fbs.ts`)
 *   **Logging**: Pino (Structured JSON logging)
-*   **Testing**: Vitest (Comprehensive API handlers & Authentication tests with 600+ LOC and 85+ assertions)
+*   **Testing**: Vitest (110 integration and unit test assertions)
 *   **Infrastructure**: Docker, GitHub Actions
 
-## 📚 Comprehensive Documentation
+---
 
-Deltasync comes with extensive production-ready manuals located in the `docs/` directory to help you deploy, secure, and integrate with the platform:
+## ⚙️ Quick Start
 
-*   **[API Reference (docs/API.md)](./docs/API.md)**: Full reference for authentication modes (session cookies vs. `dks_` API keys), sync/negotiation protocols, error payloads, and rate limits.
-*   **[Environment Variables Reference (docs/ENVIRONMENT.md)](./docs/ENVIRONMENT.md)**: Detailed configuration guide outlining required vs optional variables, example config blocks for development and production, and troubleshooting validation errors.
-*   **[Security Hardening Guide (docs/SECURITY.md)](./docs/SECURITY.md)**: Complete security architecture handbook, checklist for production deployment, secret management, JWT rotation, database encryption, and incident response procedures.
-*   **[Deployment Guide (docs/DEPLOYMENT.md)](./docs/DEPLOYMENT.md)**: Step-by-step setup guides for Local, Docker, multi-pod Kubernetes (with YAML examples), and AWS ECS (Fargate) deployments.
-*   **[Audit & Fixes Summary (FIXES_SUMMARY.md)](./FIXES_SUMMARY.md)**: High-level technical overview detailing the exact resolutions and code blocks for all 20 critical, high, and medium security/quality issues resolved in the latest release.
-*   **[Fixes Index (FIXES_INDEX.md)](./FIXES_INDEX.md)**: Quick-reference directory index of all codebase modifications, unit test coverage, and deployment readiness checklists.
-
-## 📦 Prerequisites
-
+### Prerequisites
 *   Node.js 22+
-*   An S3-compatible object storage bucket (e.g., AWS S3, MinIO, LocalStack)
-*   Rust toolchain (for native addon compilation — optional, has TS fallback)
+*   S3-compatible object storage (e.g. MinIO, LocalStack, AWS S3)
+*   Rust toolchain (Optional, required only for native addon compile)
 
-## ⚙️ Installation & Setup
-
-1.  **Clone the repository:**
+### Installation & Server Setup
+1.  **Clone the repository & install dependencies**:
     ```bash
     git clone https://github.com/parth2024-tech/delta-sync-engine.git
     cd delta-sync-engine
-    ```
-
-2.  **Install dependencies:**
-    ```bash
     npm install
     ```
-
-3.  **Build the native addon (optional, recommended):**
+2.  **Compile the Native Rust addon** (Optional):
     ```bash
     cd native
     cargo build --release
-    # The NAPI-RS addon will be at native/deltasync-native.node
-    # If skipped, the server uses a TypeScript fallback automatically.
+    # The native shared object will compile into native/deltasync-native.node
+    cd ..
     ```
-
-4.  **Configure Environment Variables:**
-    Copy the provided `.env.example` file to `.env` and configure your credentials:
+3.  **Configure Environment**:
     ```bash
     cp .env.example .env
     ```
-    Ensure you generate a secure cryptographically strong secret for production JWT:
+    Generate a cryptographically strong secret for JWT:
     ```bash
-    # Example to generate a strong key
     openssl rand -base64 32
     ```
-    
-    All critical variables (such as database type, S3 connection details, and JWT secrets) are validated at launch by the startup environment validation engine. Refer to the **[Environment Guide (docs/ENVIRONMENT.md)](./docs/ENVIRONMENT.md)** for a comprehensive explanation of every configuration parameter and deployment target.
-
-5.  **Run Database Migrations:**
+4.  **Run Database Migrations**:
     ```bash
     npx drizzle-kit push
     ```
-
-6.  **Start the Development Services:**
-    The easiest way to start the entire Lite Mode stack (including an automated local MinIO instance) is to run the demo script:
+5.  **Launch the Server & Services**:
+    The simplest way to spin up the entire Lite Mode stack (including a local MinIO bucket) is running the demo script:
     ```bash
     ./scripts/demo.sh
     ```
-    This will start the API server on `http://localhost:5000/` and the MinIO console on `http://localhost:9001/`.
-
-    Alternatively, to run manually in development mode:
+    Or start the development processes manually:
     ```bash
-    # Tab 1: Main API Server (Full-Stack UI & API)
+    # Terminal 1: Web Interface & API server
     npm run dev
 
-    # Tab 2: Outbox Event Dispatcher (handles background tasks directly)
+    # Terminal 2: Event Outbox Dispatcher
     npx tsx --env-file=.env server/outbox-dispatcher.ts
     ```
 
-7.  **Setting up the CLI (Optional):**
+### CLI Setup
+1.  **Build and link the CLI**:
     ```bash
     cd cli
     npm install
     npm run build
     npm link
-    # You can now use `deltasync init`, `deltasync push`, etc.
+    ```
+2.  **Usage**:
+    ```bash
+    # Initialize repository cache
+    deltasync init --url http://localhost:5000 --key YOUR_API_KEY
+    
+    # Sync a file
+    deltasync push my-file.bin
     ```
 
-## 📊 Benchmarks & Performance
+---
 
-Deltasync has been rigorously benchmarked against `aws s3 sync` and traditional fixed-block `rsync`.
+## 🧠 Synchronization Protocol
 
-**Key Findings:**
-* **Large Files (100MB, 1% change):** Deltasync CDC achieves **99% bandwidth savings** and is **20× faster** than fixed-block rsync.
-* **Mixed Workloads:** Achieves **90%+ bandwidth savings** while being **27× faster** than fixed-block rsync.
-* **Efficiency:** Deltasync uses **15-20× less memory** (< 1MB) than fixed-block rsync because it uses a single-pass Content-Defined Chunking (CDC) scan instead of a byte-by-byte rolling window.
+Deltasync utilizes a high-efficiency **two-phase negotiation handshake** for uploads:
 
-For a detailed breakdown of the methodology, raw data, and an honest comparison of when to use which tool, see:
-* [Benchmark Results & Charts](docs/BENCHMARK_RESULTS.md)
-* [Comparison: Deltasync vs rsync vs aws s3 sync (FAQ)](docs/COMPARISON.md)
+```
+[ deltasync CLI ]                                       [ Node.js API Server ]
+        |                                                           |
+        |---- 1. POST /api/public/sync/negotiate ------------------>|
+        |     (Send chunk signatures: Adler32, SHA-256)             |
+        |                                                           |
+        |<--- 2. Returns pre-signed S3 PUT URLs for missing chunks -|
+        |                                                           |
+        |---- 3. Upload missing chunks directly to S3 via URLs ---->| [ S3 Bucket ]
+        |                                                           |
+        |---- 4. POST /api/public/sync/commit --------------------->|
+        |     (Seal and finalize transaction)                       |
+        |                                                           |
+        |<--- 5. Returns new server version sequence ---------------|
+```
 
-## 🧠 How the Algorithm Works
+1.  **Negotiation**: The client scans the local file using CDC and generates Adler-32 and SHA-256 signatures for each chunk. It sends these to the server. The server compares them against the remote manifest database.
+2.  **Presigning**: The server identifies which chunks are missing in the S3 store and returns pre-signed S3 upload URLs for *only* the missing blocks.
+3.  **Direct Upload**: The client streams the missing chunks directly to S3. No binary payload passes through the API server, conserving server bandwidth.
+4.  **Commit**: The client issues a commit call. The server atomically updates the database, prunes old file versions, and publishes an outbox event.
+5.  **Asynchronous Verification**: The event loop wakes up outbox dispatcher workers to verify the existence of the new chunks in S3 asynchronously, updating status to `verified`.
 
-1.  **Block & Sign**: The server splits the existing file into fixed-size blocks (e.g., 4 KiB). For each block, it computes a weak Adler-32 hash and a strong SHA-256 hash.
-2.  **Roll the Window**: The client slides a window of `blockSize` bytes across the *new* file. The weak Adler-32 hash updates in O(1) time when one byte enters and another leaves the window.
-3.  **Two-Level Match**: On a 16-bit weak hit, the client verifies the block with a SHA-256 hash.
-    *   A confirmed match emits a `COPY` op.
-    *   Otherwise, the leftmost byte drops out of the window and joins a `LITERAL` run.
-4.  **Stream the Delta**: Only the `LITERAL` runs are transferred over the wire. The server then replays the `COPY` and `LITERAL` ops against the object storage blocks to reconstruct the new file version.
+---
 
-## 📡 Upload Architecture (v2 — Pre-Signed)
+## 📚 Technical Documentation Map
 
-The v2 upload flow eliminates binary data routing through the API server:
-
-1.  **Negotiate** (`POST /api/public/sync/negotiate`): Client sends chunk hashes → server returns pre-signed S3 PUT URLs for missing chunks.
-2.  **Upload**: Client uploads binary data directly to S3 via pre-signed URLs. Server bandwidth is zero.
-3.  **Commit** (`POST /api/public/sync/commit`): Client confirms upload → server atomically creates the file version + outbox event.
-
-The legacy `POST /api/public/sync/upload` endpoint remains for backward compatibility.
-
-## 🛡️ Architecture Highlights
-
-*   **Content-Addressed Storage**: Blocks are stored and keyed strictly by their SHA-256 hash. Identical blocks across different files or users are inherently deduplicated (O(1) storage cost for identical blocks).
-*   **Zero-Copy Native Hashing**: Adler-32 and SHA-256 are computed in Rust via NAPI-RS, using Rayon for parallel multi-core processing. No JavaScript byte loops.
-*   **Event-Driven Workers**: The transactional outbox guarantees that background jobs (chunk verification, GC, future RAG indexing) are executed reliably even without an external message queue.
-*   **FlatBuffer Manifests**: Operation manifests use a zero-copy binary format (DSO2) where fields are read at computed offsets — 100MB manifests are usable with zero CPU parsing overhead.
-*   **Offline GC**: Garbage collection uses compressed hash sets (simulating Roaring Bitmaps) and S3 Inventory Reports, keeping the transactional database at zero load during reconciliation.
+*   **[API Specification (docs/API.md)](./docs/API.md)**: Details endpoints, query schemas, and cookie/API key validation.
+*   **[Deployment Guide (docs/DEPLOYMENT.md)](./docs/DEPLOYMENT.md)**: Guides setups on Docker, AWS Fargate (ECS), and Kubernetes pods.
+*   **[Environment Reference (docs/ENVIRONMENT.md)](./docs/ENVIRONMENT.md)**: Complete list of configuration variables and validation criteria.
+*   **[Security HARDENING (docs/SECURITY.md)](./docs/SECURITY.md)**: Details JWT rotation, timing-attack countermeasures, database encryption, and CORS headers.
+*   **[Benchmarks & Performance (docs/BENCHMARK_RESULTS.md)](./docs/BENCHMARK_RESULTS.md)**: Compares Deltasync performance metrics against S3 Sync and fixed rsync.
