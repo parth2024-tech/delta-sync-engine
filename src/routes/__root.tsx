@@ -79,7 +79,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { property: "og:description", content: "A high-performance delta-based file sync engine using Adler-32 rolling hash and SHA-256 block verification." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
-      { name: "twitter:site", content: "@Lovable" },
+      { name: "twitter:site", content: "@deltasync" },
     ],
     links: [
       { rel: "preconnect", href: "https://fonts.googleapis.com" },
