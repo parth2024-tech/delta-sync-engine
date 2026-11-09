@@ -1,0 +1,103 @@
+{
+  "name": "tanstack_start_ts",
+  "version": "1.0.0",
+  "description": "One-paragraph description of what this project does and who it serves.",
+  "tech_stack": [
+    "React 19.2.0",
+    "TypeScript 5.8.3",
+    "Tailwind CSS 4.2.1",
+    "Drizzle ORM (PostgreSQL)"
+  ],
+  "conventions": [
+    "All components use named exports, never default exports",
+    "Database queries live exclusively in /lib/db/*.ts",
+    "API routes use Route Handlers in /app/api/**/*.ts",
+    "Zod schemas validate all external input"
+  ],
+  "architecture_patterns": [
+    "Server Components for data fetching, Client Components for interactivity only",
+    "Repository pattern for database access",
+    "Feature-based folder structure under /features"
+  ],
+  "file_structure": {
+    "src/app": "Next.js App Router pages and layouts",
+    "src/features": "Feature modules with co-located components, hooks, and types",
+    "src/lib": "Shared utilities, database client, auth helpers",
+    "src/components/ui": "Reusable UI primitives (Button, Modal, Input)",
+    "tests": "Test files mirroring src/ structure"
+  },
+  "testing_strategy": {
+    "framework": "Vitest + React Testing Library",
+    "coverage_target": "80%",
+    "patterns": [
+      "Unit tests for all utility functions",
+      "Integration tests for API routes",
+      "Component tests for interactive UI elements"
+    ]
+  },
+  "deployment": {
+    "platform": "Vercel",
+    "branch_strategy": "main → production, dev → preview",
+    "environments": [
+      "development",
+      "staging",
+      "production"
+    ]
+  },
+  "sprint_focus": "Building the user onboarding flow with email verification and profile setup.",
+  "sprint_skills": [
+    "security-and-hardening",
+    "api-and-interface-design",
+    "test-driven-development"
+  ],
+  "never_do": [
+    "Never use useEffect for data fetching — use Server Components or SWR",
+    "Never store secrets in .env files committed to git",
+    "Never use inline styles — always use Tailwind classes",
+    "Never use `any` TypeScript type — always type explicitly",
+    "Never mix database queries into React components",
+    "Never output verbose unsolicited recaps, exhaustive changelogs, or repetitive summaries that waste tokens — mention ONLY the most critical points unless explicitly asked",
+    "Never use purple gradients, pill buttons, fake reviews/metrics/counters, vague hero text, emoji icons, em dashes, crazy scroll/cursor animations, or AI slop photos/copy on websites",
+    "Never let an AI grade its own work without independent gate verification",
+    "Never leave completed work uncommitted or unpushed to GitHub",
+    "Never run unsolicited background daemons, update pollers, or indexing services on Arch Linux",
+    "Never commit or push code without passing gitleaks protect --staged secret audit",
+    "Never rely on fragile regex linters when ast-grep (sg) AST rules can be enforced"
+  ],
+  "preferred_patterns": [
+    "Practice extreme token economy: keep responses concise, high-signal, and directly answer user requests without unprompted changelogs or filler",
+    "Use Zod for all schema validation",
+    "Use Drizzle ORM for all database access",
+    "Use server actions for mutations",
+    "Use Next.js Image component for all images",
+    "Always mandate production web essentials: custom domain, custom favicon suite, remove AI badges, /privacy page, and /terms page",
+    "Always follow the 6-step Second Brain closed loop: Load Conventions -> Select Model -> Autonomous Loop -> Validate Output -> Continuous Learning -> Automated Git Push",
+    "Always enforce Arch Linux On-Demand System Governance (run interactive tools on-demand, terminate completely on exit)",
+    "Use gitleaks (gitleaks protect --staged) for zero secret leakage verification before committing or pushing",
+    "Use ast-grep (sg scan) for structural AST-level syntax rules rather than regex linters",
+    "Use just (justfile) for deterministic project verification and task runs",
+    "Use adr-tools (adr new) and D2 (d2) for all architectural decision records and C4 system diagrams",
+    "Use TypeSpec (tsp compile) for contract-first API development and OpenAPI 3.1 generation",
+    "Use vl-convert (vl-convert vl2svg) and Typst CeTZ for declarative standalone vector charts",
+    "Use Typst (typst compile) exclusively for any research paper or scientific document"
+  ],
+  "agent_skills": {
+    "directory": "/home/thor/skiils/skills",
+    "default_skills": [
+      "using-agent-skills",
+      "context-engineering",
+      "anti-vibe-design",
+      "secret-guard",
+      "ast-grep-enforcer"
+    ],
+    "mandatory_skills": {
+      "api": "contract-first-api",
+      "auth": "security-and-hardening",
+      "frontend": "anti-vibe-design",
+      "ui": "anti-vibe-design",
+      "architecture": "adr-architecture",
+      "secrets": "secret-guard"
+    },
+    "session_reporting_preference": true
+  }
+}
