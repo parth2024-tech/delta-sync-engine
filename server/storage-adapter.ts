@@ -105,7 +105,7 @@ export class LocalStorageAdapter implements StorageAdapter {
   }
 
   private getFilePath(key: string): string {
-    const safeKey = key.replace(/[^a-zA-Z0-9_\-\/]/g, "_");
+    const safeKey = key.replace(/[^a-zA-Z0-9_\-/]/g, "_");
     const fullPath = path.join(this.blocksDir, safeKey);
     const dir = path.dirname(fullPath);
     if (!fs.existsSync(dir)) {

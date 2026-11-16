@@ -11,7 +11,7 @@ interface Task {
   versionId: string;
   totalBlocks: number;
   resolve: () => void;
-  reject: (err: any) => void;
+  reject: (err: unknown) => void;
 }
 
 class WorkStealingPool {

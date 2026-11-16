@@ -136,7 +136,7 @@ export function getNegotiationSession(
     .prepare(
       "SELECT negotiation_id as negotiationId, content_sha256 as contentSha256 FROM negotiation_sessions WHERE path = ?",
     )
-    .get(filePath) as any;
+    .get(filePath) as { negotiationId: string; contentSha256: string } | undefined;
 }
 
 export function saveNegotiationSession(

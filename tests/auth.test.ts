@@ -286,11 +286,11 @@ describe("Security Edge Cases", () => {
 
   it("should handle null/undefined inputs", async () => {
     expect(() => {
-      apiKey.isValidApiKeyFormat(null as any);
+      apiKey.isValidApiKeyFormat(null as unknown as string);
     }).toThrow();
 
     expect(() => {
-      apiKey.isValidApiKeyFormat(undefined as any);
+      apiKey.isValidApiKeyFormat(undefined as unknown as string);
     }).toThrow();
   });
 

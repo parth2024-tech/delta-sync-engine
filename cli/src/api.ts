@@ -43,7 +43,10 @@ export async function fetchWithTimeout(
     if (err instanceof Error && err.name === "AbortError") {
       throw new TimeoutError(`Request timed out after ${timeoutMs}ms: ${url}`);
     }
-    throw err;
+    if (err instanceof Error) {
+      throw new NetworkError(err.message);
+    }
+    throw new NetworkError(String(err));
   } finally {
     clearTimeout(timeoutId);
   }

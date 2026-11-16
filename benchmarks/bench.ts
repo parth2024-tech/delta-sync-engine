@@ -185,7 +185,7 @@ async function runWorkload(name: string, originalData: Buffer, modifiedData: Buf
 
 // ─── Workload Generators ──────────────────────────────────────────────────────
 
-function generateLargeSingleFile(): { original: Buffer; modified: Buffer } {
+function generateLargeSingleFile(): { original: Buffer | null; modified: Buffer | null } {
   // 100 MB base, append 1 MB (1% change)
   const SIZE = 100 * 1024 * 1024;
   const APPEND = Math.round(SIZE * 0.01);
@@ -194,7 +194,7 @@ function generateLargeSingleFile(): { original: Buffer; modified: Buffer } {
   return { original, modified };
 }
 
-function generateManySmallFiles(): { original: Buffer; modified: Buffer } {
+function generateManySmallFiles(): { original: Buffer | null; modified: Buffer | null } {
   // 1,000 × 10 KB files concatenated. 5% of files are completely replaced.
   const FILE_COUNT = 1000;
   const FILE_SIZE = 10 * 1024;
@@ -262,18 +262,18 @@ async function main() {
   // Workload 1: Large single file
   console.log("\n\nGenerating workload 1: Large single file (100 MB, 1% append)...");
   const w1 = generateLargeSingleFile();
-  await runWorkload("Large Single File (100 MB, 1% change)", w1.original, w1.modified);
+  await runWorkload("Large Single File (100 MB, 1% change)", w1.original!, w1.modified!);
   // Free memory
-  (w1 as any).original = null;
-  (w1 as any).modified = null;
+  w1.original = null;
+  w1.modified = null;
   global.gc?.();
 
   // Workload 2: Many small files
   console.log("\n\nGenerating workload 2: Many small files (1,000 × 10 KB, 5% changed)...");
   const w2 = generateManySmallFiles();
-  await runWorkload("Many Small Files (1K × 10 KB, 5% changed)", w2.original, w2.modified);
-  (w2 as any).original = null;
-  (w2 as any).modified = null;
+  await runWorkload("Many Small Files (1K × 10 KB, 5% changed)", w2.original!, w2.modified!);
+  w2.original = null;
+  w2.modified = null;
   global.gc?.();
 
   // Workload 3: Mixed

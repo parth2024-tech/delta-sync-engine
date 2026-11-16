@@ -21,7 +21,25 @@ export { encodeOpsBinaryV1 } from "../../shared/ops-binary.js";
 const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-function getNativeAddon() {
+interface NativeAddon {
+  isNative: boolean;
+  cdcChunkAndHash: (
+    data: Buffer,
+    blockSize: number,
+  ) => Promise<{
+    chunks: {
+      blockIndex: number;
+      weakHash: number;
+      strongHashHex: string;
+      offset: number;
+      length: number;
+    }[];
+  }>;
+  adler32Native: (data: Buffer) => number;
+  sha256Native: (data: Buffer) => string;
+}
+
+function getNativeAddon(): NativeAddon {
   const potentialPaths = [
     // In dev mode running from cli/src/rsync.ts
     path.join(__dirname, "../../../native/deltasync-native.node"),
@@ -47,9 +65,9 @@ function getNativeAddon() {
 
   return {
     isNative: false,
-    cdcChunkAndHash: null as any,
-    adler32Native: null as any,
-    sha256Native: null as any,
+    cdcChunkAndHash: null as unknown as NativeAddon["cdcChunkAndHash"],
+    adler32Native: null as unknown as NativeAddon["adler32Native"],
+    sha256Native: null as unknown as NativeAddon["sha256Native"],
   };
 }
 
@@ -99,7 +117,7 @@ export async function buildSignatures(data: Buffer, opts: BuildSigOpts): Promise
   if (nativeAddon.isNative && opts.chunking === "cdc") {
     try {
       const res = await nativeAddon.cdcChunkAndHash(data, opts.blockSize);
-      return res.chunks.map((c: any) => ({
+      return res.chunks.map((c) => ({
         blockIndex: c.blockIndex,
         weakHash: c.weakHash,
         strongHash: c.strongHashHex,
