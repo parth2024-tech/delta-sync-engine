@@ -149,6 +149,26 @@ process.on("SIGTERM", () => {
   running = false;
 });
 
+let isIntegratedRunning = false;
+
+export function startIntegratedOutboxDispatcher(): { stop: () => void } {
+  if (isIntegratedRunning) {
+    return { stop: stopIntegratedOutboxDispatcher };
+  }
+  isIntegratedRunning = true;
+  running = true;
+  runDispatcherLoop().catch((err) => {
+    console.error("[OutboxDispatcher] Integrated loop failure:", err);
+  });
+  return { stop: stopIntegratedOutboxDispatcher };
+}
+
+export function stopIntegratedOutboxDispatcher(): void {
+  running = false;
+  isIntegratedRunning = false;
+  wakeup();
+}
+
 if (import.meta.url === `file://${process.argv[1]}`) {
   runDispatcherLoop().catch((err) => {
     console.error("[OutboxDispatcher] Fatal error:", err);

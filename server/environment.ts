@@ -8,6 +8,7 @@
 
 export interface EnvironmentConfig {
   jwtSecret: string;
+  storageDriver: "s3" | "local";
   s3Region: string;
   s3Endpoint: string;
   s3AccessKeyId: string;
@@ -49,22 +50,28 @@ export function validateEnvironment(): EnvironmentConfig {
     errors.push("JWT_SECRET must be at least 16 characters long");
   }
 
-  // Check S3 configuration
-  const s3Region = process.env.S3_REGION;
-  const s3Endpoint = process.env.S3_ENDPOINT;
-  const s3AccessKeyId = process.env.S3_ACCESS_KEY_ID;
-  const s3SecretAccessKey = process.env.S3_SECRET_ACCESS_KEY;
-  const s3BucketName = process.env.S3_BUCKET_NAME;
+  // Check Storage configuration
+  const storageDriver = (process.env.STORAGE_DRIVER || "s3") as "s3" | "local";
+  const s3Region = process.env.S3_REGION || (storageDriver === "local" ? "local" : "");
+  const s3Endpoint =
+    process.env.S3_ENDPOINT || (storageDriver === "local" ? "http://localhost:5000" : "");
+  const s3AccessKeyId = process.env.S3_ACCESS_KEY_ID || (storageDriver === "local" ? "local" : "");
+  const s3SecretAccessKey =
+    process.env.S3_SECRET_ACCESS_KEY || (storageDriver === "local" ? "local" : "");
+  const s3BucketName = process.env.S3_BUCKET_NAME || "deltasync-blocks";
 
-  if (!s3Region) errors.push("S3_REGION is required");
-  if (!s3Endpoint) errors.push("S3_ENDPOINT is required");
-  if (!s3AccessKeyId) errors.push("S3_ACCESS_KEY_ID is required");
-  if (!s3SecretAccessKey) errors.push("S3_SECRET_ACCESS_KEY is required");
-  if (!s3BucketName) errors.push("S3_BUCKET_NAME is required");
+  if (storageDriver === "s3") {
+    if (!s3Region) errors.push("S3_REGION is required when STORAGE_DRIVER=s3");
+    if (!s3Endpoint) errors.push("S3_ENDPOINT is required when STORAGE_DRIVER=s3");
+    if (!s3AccessKeyId) errors.push("S3_ACCESS_KEY_ID is required when STORAGE_DRIVER=s3");
+    if (!s3SecretAccessKey) errors.push("S3_SECRET_ACCESS_KEY is required when STORAGE_DRIVER=s3");
+    if (!s3BucketName) errors.push("S3_BUCKET_NAME is required when STORAGE_DRIVER=s3");
+  }
 
   // Check sensitive values aren't using defaults in production
   if (
     nodeEnv === "production" &&
+    storageDriver === "s3" &&
     (s3AccessKeyId === "devaccesskey" || s3SecretAccessKey === "devsecretkey")
   ) {
     errors.push("S3 credentials must not use default development values in production");
@@ -116,6 +123,7 @@ export function validateEnvironment(): EnvironmentConfig {
 
   return {
     jwtSecret: jwtSecret!,
+    storageDriver,
     s3Region: s3Region!,
     s3Endpoint: s3Endpoint!,
     s3AccessKeyId: s3AccessKeyId!,

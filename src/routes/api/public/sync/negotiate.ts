@@ -22,22 +22,10 @@ import { loadVersionChunks } from "../../../../../server/version-chunks";
 import { createS3Limiter } from "../../../../../server/s3-limiter";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
+import { getStorageAdapter } from "../../../../../server/storage-adapter";
 import { getS3Key } from "../../../../../shared/hash";
 
-import { S3Client, HeadObjectCommand } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { PutObjectCommand } from "@aws-sdk/client-s3";
-
-const s3 = new S3Client({
-  region: process.env.S3_REGION || "auto",
-  endpoint: process.env.S3_ENDPOINT,
-  forcePathStyle: true,
-  credentials: {
-    accessKeyId: process.env.S3_ACCESS_KEY_ID || "dev",
-    secretAccessKey: process.env.S3_SECRET_ACCESS_KEY || "dev",
-  },
-});
-const BUCKET_NAME = process.env.S3_BUCKET_NAME || "deltasync-blocks";
+const storage = getStorageAdapter();
 
 const s3Limited = createS3Limiter(
   Math.max(1, Math.min(32, parseInt(process.env.S3_UPLOAD_CONCURRENCY || "12", 10) || 12)),
@@ -71,17 +59,7 @@ const negotiateSchema = z.object({
 });
 
 async function blockExists(key: string): Promise<boolean> {
-  try {
-    await s3Limited(() =>
-      s3.send(new HeadObjectCommand({ Bucket: BUCKET_NAME, Key: getS3Key(key) })),
-    );
-    return true;
-  } catch (e: unknown) {
-    const name = (e as { name?: string })?.name;
-    const code = (e as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode;
-    if (name === "NotFound" || code === 404) return false;
-    throw e;
-  }
+  return storage.headObject(getS3Key(key));
 }
 
 export const Route = createFileRoute("/api/public/sync/negotiate")({
@@ -173,15 +151,7 @@ export const Route = createFileRoute("/api/public/sync/negotiate")({
         for (const [hash, indices] of uniqueHashMap) {
           if (existingHashes.has(hash)) continue;
 
-          const uploadUrl = await getSignedUrl(
-            s3,
-            new PutObjectCommand({
-              Bucket: BUCKET_NAME,
-              Key: getS3Key(hash), // content-addressed: upload directly to final key
-              ContentType: "application/octet-stream",
-            }),
-            { expiresIn: PRESIGN_EXPIRY },
-          );
+          const uploadUrl = await storage.getUploadUrl(getS3Key(hash), PRESIGN_EXPIRY);
 
           // Only need one upload URL per unique hash
           missingChunks.push({

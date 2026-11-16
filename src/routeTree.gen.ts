@@ -29,6 +29,7 @@ import { Route as ApiPublicSyncInfoRouteImport } from './routes/api/public/sync/
 import { Route as ApiPublicSyncFilesRouteImport } from './routes/api/public/sync/files'
 import { Route as ApiPublicSyncDownloadRouteImport } from './routes/api/public/sync/download'
 import { Route as ApiPublicSyncCommitRouteImport } from './routes/api/public/sync/commit'
+import { Route as ApiPublicStorageUploadRouteImport } from './routes/api/public/storage/upload'
 
 const SitemapDotxmlRoute = SitemapDotxmlRouteImport.update({
   id: '/sitemap.xml',
@@ -130,6 +131,11 @@ const ApiPublicSyncCommitRoute = ApiPublicSyncCommitRouteImport.update({
   path: '/api/public/sync/commit',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicStorageUploadRoute = ApiPublicStorageUploadRouteImport.update({
+  id: '/api/public/storage/upload',
+  path: '/api/public/storage/upload',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -143,6 +149,7 @@ export interface FileRoutesByFullPath {
   '/api/health': typeof ApiHealthRoute
   '/files/$fileId': typeof AuthenticatedFilesFileIdRoute
   '/files/': typeof AuthenticatedFilesIndexRoute
+  '/api/public/storage/upload': typeof ApiPublicStorageUploadRoute
   '/api/public/sync/commit': typeof ApiPublicSyncCommitRoute
   '/api/public/sync/download': typeof ApiPublicSyncDownloadRoute
   '/api/public/sync/files': typeof ApiPublicSyncFilesRoute
@@ -164,6 +171,7 @@ export interface FileRoutesByTo {
   '/api/health': typeof ApiHealthRoute
   '/files/$fileId': typeof AuthenticatedFilesFileIdRoute
   '/files': typeof AuthenticatedFilesIndexRoute
+  '/api/public/storage/upload': typeof ApiPublicStorageUploadRoute
   '/api/public/sync/commit': typeof ApiPublicSyncCommitRoute
   '/api/public/sync/download': typeof ApiPublicSyncDownloadRoute
   '/api/public/sync/files': typeof ApiPublicSyncFilesRoute
@@ -187,6 +195,7 @@ export interface FileRoutesById {
   '/api/health': typeof ApiHealthRoute
   '/_authenticated/files/$fileId': typeof AuthenticatedFilesFileIdRoute
   '/_authenticated/files/': typeof AuthenticatedFilesIndexRoute
+  '/api/public/storage/upload': typeof ApiPublicStorageUploadRoute
   '/api/public/sync/commit': typeof ApiPublicSyncCommitRoute
   '/api/public/sync/download': typeof ApiPublicSyncDownloadRoute
   '/api/public/sync/files': typeof ApiPublicSyncFilesRoute
@@ -210,6 +219,7 @@ export interface FileRouteTypes {
     | '/api/health'
     | '/files/$fileId'
     | '/files/'
+    | '/api/public/storage/upload'
     | '/api/public/sync/commit'
     | '/api/public/sync/download'
     | '/api/public/sync/files'
@@ -231,6 +241,7 @@ export interface FileRouteTypes {
     | '/api/health'
     | '/files/$fileId'
     | '/files'
+    | '/api/public/storage/upload'
     | '/api/public/sync/commit'
     | '/api/public/sync/download'
     | '/api/public/sync/files'
@@ -253,6 +264,7 @@ export interface FileRouteTypes {
     | '/api/health'
     | '/_authenticated/files/$fileId'
     | '/_authenticated/files/'
+    | '/api/public/storage/upload'
     | '/api/public/sync/commit'
     | '/api/public/sync/download'
     | '/api/public/sync/files'
@@ -271,6 +283,7 @@ export interface RootRouteChildren {
   PlaygroundRoute: typeof PlaygroundRoute
   SitemapDotxmlRoute: typeof SitemapDotxmlRoute
   ApiHealthRoute: typeof ApiHealthRoute
+  ApiPublicStorageUploadRoute: typeof ApiPublicStorageUploadRoute
   ApiPublicSyncCommitRoute: typeof ApiPublicSyncCommitRoute
   ApiPublicSyncDownloadRoute: typeof ApiPublicSyncDownloadRoute
   ApiPublicSyncFilesRoute: typeof ApiPublicSyncFilesRoute
@@ -423,6 +436,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicSyncCommitRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/storage/upload': {
+      id: '/api/public/storage/upload'
+      path: '/api/public/storage/upload'
+      fullPath: '/api/public/storage/upload'
+      preLoaderRoute: typeof ApiPublicStorageUploadRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -454,6 +474,7 @@ const rootRouteChildren: RootRouteChildren = {
   PlaygroundRoute: PlaygroundRoute,
   SitemapDotxmlRoute: SitemapDotxmlRoute,
   ApiHealthRoute: ApiHealthRoute,
+  ApiPublicStorageUploadRoute: ApiPublicStorageUploadRoute,
   ApiPublicSyncCommitRoute: ApiPublicSyncCommitRoute,
   ApiPublicSyncDownloadRoute: ApiPublicSyncDownloadRoute,
   ApiPublicSyncFilesRoute: ApiPublicSyncFilesRoute,

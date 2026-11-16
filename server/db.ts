@@ -10,13 +10,22 @@
  * Set `DB_BACKEND=postgres` and `DATABASE_URL=postgres://...` to enable Postgres mode.
  */
 
-import { drizzle } from "drizzle-orm/better-sqlite3";
+import { drizzle as drizzleSqlite } from "drizzle-orm/better-sqlite3";
+import { drizzle as drizzlePg } from "drizzle-orm/node-postgres";
 import Database from "better-sqlite3";
+import pg from "pg";
+const { Pool } = pg;
 import * as schema from "../shared/schema";
 import path from "path";
 import fs from "fs";
 
-const DB_BACKEND = process.env.DB_BACKEND || "sqlite";
+const isPostgresConfigured =
+  process.env.DB_BACKEND === "postgres" ||
+  Boolean(process.env.DATABASE_URL?.startsWith("postgres"));
+
+const DB_BACKEND = isPostgresConfigured ? "postgres" : process.env.DB_BACKEND || "sqlite";
+
+let pgPool: pg.Pool | null = null;
 
 function createSqliteDb() {
   const dbDir = path.resolve(process.cwd(), ".deltasync");
@@ -28,23 +37,25 @@ function createSqliteDb() {
   sqlite.pragma("synchronous = NORMAL");
   // Enable aggressive busy timeout for concurrent access
   sqlite.pragma("busy_timeout = 10000");
-  return drizzle(sqlite, { schema });
+  return drizzleSqlite(sqlite, { schema });
+}
+
+function createPgDb() {
+  const connectionString = process.env.DATABASE_URL || "postgres://localhost:5432/deltasync";
+  pgPool = new Pool({
+    connectionString,
+    max: parseInt(process.env.PG_MAX_POOL || "20", 10),
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 5000,
+  });
+  console.info("[DB] Initialized PostgreSQL connection pool with Drizzle ORM");
+  return drizzlePg(pgPool, { schema });
 }
 
 function createDb() {
   if (DB_BACKEND === "postgres") {
-    // Postgres backend extension point
-    // When implementing, replace with:
-    //   import { drizzle } from "drizzle-orm/node-postgres";
-    //   import { Pool } from "pg";
-    //   const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-    //   return drizzle(pool, { schema });
-    console.warn(
-      "[DB] DB_BACKEND=postgres is configured but not yet implemented. Falling back to SQLite.",
-    );
-    return createSqliteDb();
+    return createPgDb() as unknown as ReturnType<typeof createSqliteDb>;
   }
-
   return createSqliteDb();
 }
 
@@ -53,4 +64,12 @@ export const db = createDb();
 /** Returns the current database backend name. */
 export function getDbBackend(): string {
   return DB_BACKEND;
+}
+
+/** Close active database connections during graceful shutdown. */
+export async function closeDb(): Promise<void> {
+  if (pgPool) {
+    await pgPool.end();
+    pgPool = null;
+  }
 }

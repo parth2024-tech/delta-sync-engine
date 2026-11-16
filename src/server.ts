@@ -2,7 +2,12 @@ import "./lib/error-capture";
 
 import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";
+import { startIntegratedOutboxDispatcher } from "../server/outbox-dispatcher";
 import pino from "pino";
+
+if (process.env.INTEGRATED_OUTBOX !== "false" && process.env.NODE_ENV !== "test") {
+  startIntegratedOutboxDispatcher();
+}
 
 const logger = pino({
   level: process.env.LOG_LEVEL || "info",
