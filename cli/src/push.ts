@@ -17,6 +17,7 @@ import {
 import { buildSignatures, adaptiveChunkSize, contentHash } from "./rsync.js";
 import * as api from "./api.js";
 import { fetchWithTimeout, sleepWithJitter } from "./api.js";
+import { defaultBandwidthLimiter } from "./bandwidth-shaper.js";
 import type { Config } from "./config.js";
 
 const UPLOAD_CONCURRENCY = Math.max(
@@ -209,6 +210,7 @@ export async function performPush(
 
             while (attempts > 0 && !uploadError) {
               try {
+                await defaultBandwidthLimiter.consume(chunk.length);
                 const r = await fetchWithTimeout(
                   chunk.uploadUrl,
                   {

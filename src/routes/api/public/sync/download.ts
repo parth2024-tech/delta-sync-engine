@@ -94,20 +94,63 @@ export const Route = createFileRoute("/api/public/sync/download")({
 
         const filename = file.path.split("/").pop() ?? "download";
 
-        const stream = new ReadableStream<Uint8Array>({
-          async start(controller) {
-            for (const c of chunks) {
-              try {
-                const data = await fetchBlock(c.strongHashHex);
-                controller.enqueue(data);
-              } catch (err) {
-                controller.error(
-                  new Error(`Block ${c.strongHashHex} not found in block-store: ${String(err)}`),
-                );
-                return;
-              }
+        const PREFETCH_WINDOW = 8;
+        let currentIndex = 0;
+        const inFlight = new Map<number, Promise<Uint8Array>>();
+
+        const schedulePrefetches = () => {
+          while (inFlight.size < PREFETCH_WINDOW && currentIndex + inFlight.size < chunks.length) {
+            const targetIdx = currentIndex + inFlight.size;
+            const targetChunk = chunks[targetIdx]!;
+            if (!inFlight.has(targetIdx)) {
+              inFlight.set(
+                targetIdx,
+                fetchBlock(targetChunk.strongHashHex).catch((err: unknown) => {
+                  const msg = err instanceof Error ? err.message : String(err);
+                  throw new Error(
+                    `Block ${targetChunk.strongHashHex} not found in block-store: ${msg}`,
+                  );
+                }),
+              );
             }
-            controller.close();
+          }
+        };
+
+        const stream = new ReadableStream<Uint8Array>({
+          start() {
+            schedulePrefetches();
+          },
+          async pull(controller) {
+            if (currentIndex >= chunks.length) {
+              controller.close();
+              return;
+            }
+
+            // Honor downstream backpressure
+            if (controller.desiredSize !== null && controller.desiredSize <= 0) {
+              return;
+            }
+
+            schedulePrefetches();
+
+            const blockPromise = inFlight.get(currentIndex);
+            if (!blockPromise) {
+              controller.error(new Error(`Prefetch state error for block index ${currentIndex}`));
+              return;
+            }
+
+            try {
+              const data = await blockPromise;
+              inFlight.delete(currentIndex);
+              currentIndex++;
+              controller.enqueue(data);
+              schedulePrefetches();
+            } catch (err) {
+              controller.error(err instanceof Error ? err : new Error(String(err)));
+            }
+          },
+          cancel() {
+            inFlight.clear();
           },
         });
 
