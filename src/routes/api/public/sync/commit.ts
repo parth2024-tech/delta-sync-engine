@@ -44,7 +44,7 @@ export const Route = createFileRoute("/api/public/sync/commit")({
         }
 
         // Retrieve the negotiation token (not consumed until commit succeeds — supports retries)
-        const negotiation = getNegotiation(body.negotiationId);
+        const negotiation = await getNegotiation(body.negotiationId);
         if (!negotiation) {
           return json({ error: "Negotiation expired or invalid" }, 410);
         }
@@ -84,7 +84,12 @@ export const Route = createFileRoute("/api/public/sync/commit")({
         }
 
         // Calculate bytes saved (chunks reused from previous version)
-        const bytesTransferred = negotiation.chunks.reduce((sum, c) => sum + c.length, 0);
+        const missingHashSet = new Set(negotiation.missingChunkHashes ?? []);
+        const bytesTransferred = negotiation.missingChunkHashes
+          ? negotiation.chunks
+              .filter((c) => missingHashSet.has(c.strongHash))
+              .reduce((sum, c) => sum + c.length, 0)
+          : negotiation.chunks.reduce((sum, c) => sum + c.length, 0);
         const bytesSaved = Math.max(0, negotiation.newSize - bytesTransferred);
 
         let returnVal = { versionNo: 0, bytesSaved };
@@ -185,7 +190,7 @@ export const Route = createFileRoute("/api/public/sync/commit")({
         }
 
         // Consume the negotiation token after successful commit
-        clearNegotiation(body.negotiationId);
+        await clearNegotiation(body.negotiationId);
 
         // Notify outbox dispatcher of new event
         outboxNotifier.emitInserted();

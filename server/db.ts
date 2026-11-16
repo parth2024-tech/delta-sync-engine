@@ -21,9 +21,11 @@ import fs from "fs";
 
 const isPostgresConfigured =
   process.env.DB_BACKEND === "postgres" ||
-  Boolean(process.env.DATABASE_URL?.startsWith("postgres"));
+  (process.env.NODE_ENV !== "test" &&
+    process.env.DB_BACKEND !== "sqlite" &&
+    Boolean(process.env.DATABASE_URL?.startsWith("postgres")));
 
-const DB_BACKEND = isPostgresConfigured ? "postgres" : process.env.DB_BACKEND || "sqlite";
+const DB_BACKEND = isPostgresConfigured ? "postgres" : "sqlite";
 
 let pgPool: pg.Pool | null = null;
 

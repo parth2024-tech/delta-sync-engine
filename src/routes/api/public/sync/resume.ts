@@ -41,7 +41,7 @@ export const Route = createFileRoute("/api/public/sync/resume")({
         }
 
         // Look up the existing negotiation (non-consuming read)
-        const negotiation = getNegotiation(body.negotiationId);
+        const negotiation = await getNegotiation(body.negotiationId);
         if (!negotiation) {
           return json({ error: "Negotiation expired or invalid. Please re-negotiate." }, 410);
         }

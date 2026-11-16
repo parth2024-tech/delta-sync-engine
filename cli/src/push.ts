@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import path from "node:path";
 import { readFileSync, writeFileSync, statSync, existsSync } from "fs";
 import {
   getFile,
@@ -9,6 +10,9 @@ import {
   getNegotiationSession,
   saveNegotiationSession,
   deleteNegotiationSession,
+  getOrCreateSyncSession,
+  setSessionFileState,
+  updateSyncSessionState,
 } from "./db.js";
 import { buildSignatures, adaptiveChunkSize, contentHash } from "./rsync.js";
 import * as api from "./api.js";
@@ -63,20 +67,29 @@ async function parallelLimit<T, R>(
 export async function performPush(
   filePath: string,
   cfg: Config,
+  sessionId?: string,
 ): Promise<{ versionNo: number; bytesSaved: number }> {
   if (!existsSync(filePath)) {
     throw new Error(`File not found: ${filePath}`);
   }
 
+  const activeSessionId =
+    sessionId ?? getOrCreateSyncSession(path.dirname(path.resolve(filePath))).sessionId;
+
   const stat = statSync(filePath);
+  setSessionFileState(activeSessionId, filePath, "pending", { fileSize: stat.size });
+
   const data = readFileSync(filePath);
   const hash = await contentHash(data);
   const cached = getFile(filePath);
 
   if (cached?.last_hash === hash) {
     console.log(`✓ ${filePath} — unchanged, skipping`);
+    setSessionFileState(activeSessionId, filePath, "skipped", { hash, fileSize: stat.size });
     return { versionNo: cached.server_version, bytesSaved: 0 };
   }
+
+  setSessionFileState(activeSessionId, filePath, "hashed", { hash, fileSize: stat.size });
 
   // 1. STATEFUL RECONCILIATION: Check if we have an active negotiation session for this file path
   let session = getNegotiationSession(filePath);
@@ -133,6 +146,13 @@ export async function performPush(
     saveNegotiationSession(filePath, negotiationId, hash);
     console.log(`[ResumeEngine] Handshake successful. negotiationId: ${negotiationId}`);
   }
+
+  setSessionFileState(activeSessionId, filePath, "negotiated", {
+    hash,
+    negotiationId,
+    totalChunks: chunkList.length,
+    uploadedChunks: chunkList.length - missingChunks.length,
+  });
 
   // 2. SPARSE PAYLOAD RECONSTRUCTION: Skip local database-journaled completed chunks
   const completedLocal = getCompletedChunks(negotiationId);
@@ -267,6 +287,13 @@ export async function performPush(
   }
 
   // 4. ATOMIC SYNC SEALING & COMMIT
+  setSessionFileState(activeSessionId, filePath, "committing", {
+    negotiationId,
+    hash,
+    totalChunks: chunkList.length,
+    uploadedChunks: chunkList.length,
+  });
+
   console.log(`[ResumeEngine] Committing upload to server…`);
   const commitResult = await api.commitSync(cfg, negotiationId);
 
@@ -275,6 +302,12 @@ export async function performPush(
   deleteNegotiationSession(filePath);
 
   upsertFile(filePath, stat.mtimeMs, stat.size, hash, commitResult.versionNo);
+  setSessionFileState(activeSessionId, filePath, "committed", {
+    hash,
+    totalChunks: chunkList.length,
+    uploadedChunks: chunkList.length,
+  });
+  updateSyncSessionState(activeSessionId, "completed");
   const savedPct = data.length > 0 ? Math.round((commitResult.bytesSaved / data.length) * 100) : 0;
   console.log(
     `✓ pushed v${commitResult.versionNo} — saved ${fmtBytes(commitResult.bytesSaved)} (${savedPct}%)`,

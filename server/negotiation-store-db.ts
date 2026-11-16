@@ -5,12 +5,12 @@
  *   - getNegotiation() reads without consuming (allows retries)
  *   - clearNegotiation() explicitly consumes after successful commit
  *   - TTL-based cleanup (1 hour, matches pre-signed URL expiry)
- *   - Supports horizontal scaling (shared database backend)
+ *   - Supports horizontal scaling across multi-node replicas
  */
 
 import { db } from "./db";
 import { negotiations } from "../shared/schema";
-import { eq, lt, and, desc } from "drizzle-orm";
+import { eq, lt } from "drizzle-orm";
 
 export interface NegotiationPayload {
   userId: string;
@@ -20,6 +20,7 @@ export interface NegotiationPayload {
   newSize: number;
   contentSha256: string;
   chunks: { strongHash: string; length: number; weakHash?: number }[];
+  missingChunkHashes?: string[];
   snapshotCurrentVersionId: string | null;
 }
 
@@ -28,8 +29,13 @@ const NEGOTIATION_TTL_MS = 60 * 60 * 1000; // 1 hour (matches pre-signed URL exp
 export async function setNegotiation(id: string, payload: NegotiationPayload): Promise<void> {
   const expiresAt = new Date(Date.now() + NEGOTIATION_TTL_MS);
 
-  // Pack chunks as binary format for efficient storage
-  const packedChunks = Buffer.from(JSON.stringify(payload.chunks));
+  // Pack chunks and missingChunkHashes
+  const packedChunks = Buffer.from(
+    JSON.stringify({
+      chunks: payload.chunks,
+      missingChunkHashes: payload.missingChunkHashes,
+    }),
+  );
 
   await db
     .insert(negotiations)
@@ -43,9 +49,21 @@ export async function setNegotiation(id: string, payload: NegotiationPayload): P
       contentSha256: payload.contentSha256,
       chunks: packedChunks,
       snapshotVersionId: payload.snapshotCurrentVersionId,
-      expiresAt: expiresAt.getTime(),
+      expiresAt,
     })
-    .run();
+    .onConflictDoUpdate({
+      target: negotiations.id,
+      set: {
+        path: payload.path,
+        chunking: payload.chunking,
+        blockSize: payload.blockSize,
+        newSize: payload.newSize,
+        contentSha256: payload.contentSha256,
+        chunks: packedChunks,
+        snapshotVersionId: payload.snapshotCurrentVersionId,
+        expiresAt,
+      },
+    });
 }
 
 /**
@@ -53,18 +71,24 @@ export async function setNegotiation(id: string, payload: NegotiationPayload): P
  * The negotiation remains valid for retries if commit fails.
  */
 export async function getNegotiation(id: string): Promise<NegotiationPayload | null> {
-  const entry = await db.select().from(negotiations).where(eq(negotiations.id, id)).get();
+  const rows = await db.select().from(negotiations).where(eq(negotiations.id, id)).limit(1);
 
+  const entry = rows[0];
   if (!entry) return null;
 
   // Check expiration
-  if (entry.expiresAt < Date.now()) {
-    await db.delete(negotiations).where(eq(negotiations.id, id)).run();
+  const expiresAtMs =
+    entry.expiresAt instanceof Date ? entry.expiresAt.getTime() : Number(entry.expiresAt);
+  if (expiresAtMs < Date.now()) {
+    await db.delete(negotiations).where(eq(negotiations.id, id));
     return null;
   }
 
   // Reconstruct payload
-  const chunks = JSON.parse(entry.chunks!.toString());
+  const rawData = JSON.parse(entry.chunks!.toString("utf-8"));
+  const chunks = Array.isArray(rawData) ? rawData : rawData.chunks;
+  const missingChunkHashes = Array.isArray(rawData) ? undefined : rawData.missingChunkHashes;
+
   return {
     userId: entry.userId,
     path: entry.path,
@@ -73,6 +97,7 @@ export async function getNegotiation(id: string): Promise<NegotiationPayload | n
     newSize: entry.newSize,
     contentSha256: entry.contentSha256,
     chunks,
+    missingChunkHashes,
     snapshotCurrentVersionId: entry.snapshotVersionId,
   };
 }
@@ -81,7 +106,7 @@ export async function getNegotiation(id: string): Promise<NegotiationPayload | n
  * Consume and remove a negotiation after successful commit.
  */
 export async function clearNegotiation(id: string): Promise<void> {
-  await db.delete(negotiations).where(eq(negotiations.id, id)).run();
+  await db.delete(negotiations).where(eq(negotiations.id, id));
 }
 
 /**
@@ -98,9 +123,8 @@ export async function getAndClearNegotiation(id: string): Promise<NegotiationPay
  * Cleanup expired entries.
  * Safe to call repeatedly - only deletes expired records.
  */
-export async function cleanupExpiredNegotiations(): Promise<number> {
-  const result = await db.delete(negotiations).where(lt(negotiations.expiresAt, Date.now())).run();
-  return result.changes;
+export async function cleanupExpiredNegotiations(): Promise<void> {
+  await db.delete(negotiations).where(lt(negotiations.expiresAt, new Date()));
 }
 
 // Schedule periodic cleanup

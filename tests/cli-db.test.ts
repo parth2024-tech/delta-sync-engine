@@ -10,6 +10,10 @@ import {
   saveNegotiationSession,
   getNegotiationSession,
   deleteNegotiationSession,
+  getOrCreateSyncSession,
+  updateSyncSessionState,
+  setSessionFileState,
+  getSessionFile,
 } from "../cli/src/db";
 import fs from "node:fs";
 import path from "node:path";
@@ -115,6 +119,65 @@ describe("CLI Cache & Journal Database", () => {
 
       deleteNegotiationSession(sessionFile);
       expect(getNegotiationSession(sessionFile)).toBeUndefined();
+    });
+  });
+
+  describe("Checkpointing State Machine (Resumable Sync)", () => {
+    it("should create new sync session or resume existing active session", () => {
+      const rootPath = `/tmp/test-sync-root-${Date.now()}-${Math.random()}`;
+      const { sessionId, isResume } = getOrCreateSyncSession(rootPath);
+      expect(sessionId).toBeDefined();
+      expect(isResume).toBe(false);
+
+      // Re-querying same active session should resume
+      const secondCall = getOrCreateSyncSession(rootPath);
+      expect(secondCall.sessionId).toBe(sessionId);
+      expect(secondCall.isResume).toBe(true);
+
+      // Complete the session
+      updateSyncSessionState(sessionId, "completed", { totalFiles: 5, completedFiles: 5 });
+
+      // After completion, new call creates a fresh session
+      const freshCall = getOrCreateSyncSession(rootPath);
+      expect(freshCall.sessionId).not.toBe(sessionId);
+      expect(freshCall.isResume).toBe(false);
+    });
+
+    it("should transition file states and preserve chunk upload checkpoints", () => {
+      const rootPath = `/tmp/test-checkpoint-${Date.now()}-${Math.random()}`;
+      const { sessionId } = getOrCreateSyncSession(rootPath);
+      const filePath = `${rootPath}/large-file.bin`;
+
+      // 1. Pending discovery
+      setSessionFileState(sessionId, filePath, "pending", { fileSize: 50000 });
+      let file = getSessionFile(sessionId, filePath);
+      expect(file?.state).toBe("pending");
+      expect(file?.file_size).toBe(50000);
+
+      // 2. Hashed
+      const hash = "abc123sha256hash";
+      setSessionFileState(sessionId, filePath, "hashed", { hash });
+      file = getSessionFile(sessionId, filePath);
+      expect(file?.state).toBe("hashed");
+      expect(file?.content_hash).toBe(hash);
+
+      // 3. Negotiated
+      setSessionFileState(sessionId, filePath, "negotiated", {
+        negotiationId: "neg-session-checkpoint",
+        totalChunks: 10,
+        uploadedChunks: 3,
+      });
+      file = getSessionFile(sessionId, filePath);
+      expect(file?.state).toBe("negotiated");
+      expect(file?.negotiation_id).toBe("neg-session-checkpoint");
+      expect(file?.total_chunks).toBe(10);
+      expect(file?.uploaded_chunks).toBe(3);
+
+      // 4. Committed
+      setSessionFileState(sessionId, filePath, "committed", { uploadedChunks: 10 });
+      file = getSessionFile(sessionId, filePath);
+      expect(file?.state).toBe("committed");
+      expect(file?.uploaded_chunks).toBe(10);
     });
   });
 });

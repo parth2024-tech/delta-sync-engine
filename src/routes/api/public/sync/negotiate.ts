@@ -161,9 +161,9 @@ export const Route = createFileRoute("/api/public/sync/negotiate")({
           });
         }
 
-        // Create a negotiation token (stored in memory) to validate the commit phase
+        // Create a negotiation token (persisted to distributed database) to validate the commit phase
         const negotiationId = crypto.randomUUID();
-        setNegotiation(negotiationId, {
+        await setNegotiation(negotiationId, {
           userId,
           path: body.path,
           chunking: body.chunking,
@@ -171,6 +171,7 @@ export const Route = createFileRoute("/api/public/sync/negotiate")({
           newSize: body.newSize,
           contentSha256: body.contentSha256,
           chunks: body.chunks,
+          missingChunkHashes: missingChunks.map((c) => c.strongHash),
           snapshotCurrentVersionId,
         });
 
