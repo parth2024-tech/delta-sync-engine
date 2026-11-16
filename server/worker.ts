@@ -16,6 +16,7 @@ import { eq } from "drizzle-orm";
 import { getS3Key } from "../shared/hash";
 import { outboxNotifier } from "./outbox-notifier";
 import { S3Client, HeadObjectCommand, DeleteObjectsCommand } from "@aws-sdk/client-s3";
+import { CasLifecycleManager } from "./cas-lifecycle";
 
 const s3 = new S3Client({
   region: process.env.S3_REGION || "auto",
@@ -132,6 +133,9 @@ export async function handleCleanupFile(payload: { fileId: string; chunkHashes?:
     );
     return;
   }
+
+  // Atomically dereference chunks in the CAS Block Index
+  await CasLifecycleManager.dereference(chunkHashes);
 
   // Batch delete S3 objects (max 1000 per request)
   const DELETE_BATCH = 1000;

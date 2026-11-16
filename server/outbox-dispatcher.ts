@@ -12,7 +12,7 @@
 
 import { db } from "./db";
 import { outboxEvents } from "../shared/schema";
-import { isNull, asc, eq, inArray } from "drizzle-orm";
+import { isNull, asc, eq, inArray, and, lte } from "drizzle-orm";
 import { handleVerifyChunks, handleCleanupFile, runGarbageCollection } from "./worker";
 import { workerPool } from "./worker-pool";
 
@@ -20,8 +20,7 @@ import { outboxNotifier } from "./outbox-notifier";
 
 const POLL_INTERVAL_MS = parseInt(process.env.OUTBOX_POLL_MS || "2000", 10);
 const BATCH_SIZE = 50;
-
-// Schedule automatic GC once per day (24 hours)
+const MAX_ATTEMPTS = 5;
 const GC_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 let running = true;
@@ -34,13 +33,11 @@ function wakeup() {
 }
 
 async function pollAndDispatch(): Promise<number> {
-  // Use a transaction to atomically claim events for processing.
-  // BEGIN IMMEDIATE prevents other SQLite connections from double-processing.
-  // For Postgres mode, this would use FOR UPDATE SKIP LOCKED.
+  // Use a query to claim unprocessed, non-deadlettered events for processing.
   const events = await db
     .select()
     .from(outboxEvents)
-    .where(isNull(outboxEvents.processedAt))
+    .where(and(isNull(outboxEvents.processedAt), lte(outboxEvents.attempts, MAX_ATTEMPTS)))
     .orderBy(asc(outboxEvents.createdAt))
     .limit(BATCH_SIZE);
 
@@ -73,8 +70,35 @@ async function pollAndDispatch(): Promise<number> {
 
       processedIds.push(event.id);
       dispatched++;
-    } catch (err) {
-      console.error(`[OutboxDispatcher] Failed to dispatch event ${event.id}:`, err);
+    } catch (err: unknown) {
+      const nextAttempts = (event.attempts ?? 0) + 1;
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      console.error(
+        `[OutboxDispatcher] Failed to dispatch event ${event.id} (attempt ${nextAttempts}/${MAX_ATTEMPTS}):`,
+        err,
+      );
+
+      if (nextAttempts >= MAX_ATTEMPTS) {
+        console.error(
+          `[OutboxDispatcher] Dead-lettering poison event ${event.id} after ${nextAttempts} failed attempts.`,
+        );
+        await db
+          .update(outboxEvents)
+          .set({
+            attempts: nextAttempts,
+            lastError: `[DLQ] Exceeded ${MAX_ATTEMPTS} attempts: ${errorMsg}`,
+            processedAt: new Date(),
+          })
+          .where(eq(outboxEvents.id, event.id));
+      } else {
+        await db
+          .update(outboxEvents)
+          .set({
+            attempts: nextAttempts,
+            lastError: errorMsg,
+          })
+          .where(eq(outboxEvents.id, event.id));
+      }
     }
   }
 

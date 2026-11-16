@@ -5,6 +5,7 @@
 import zlib from "node:zlib";
 import type { Config } from "./config.js";
 import type { Op } from "./rsync.js";
+import { generateTraceContext, formatTraceparent, type TraceContext } from "./telemetry.js";
 
 export class NetworkError extends Error {
   constructor(
@@ -30,6 +31,7 @@ export async function fetchWithTimeout(
   url: string,
   options: RequestInit = {},
   timeoutMs = 30000,
+  traceCtx?: TraceContext,
 ): Promise<Response> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -37,6 +39,10 @@ export async function fetchWithTimeout(
     const headers = new Headers(options.headers || {});
     if (!headers.has("Accept-Encoding")) {
       headers.set("Accept-Encoding", "gzip, deflate, br");
+    }
+    const ctx = traceCtx ?? generateTraceContext();
+    if (!headers.has("traceparent")) {
+      headers.set("traceparent", formatTraceparent(ctx));
     }
     return await fetch(url, { ...options, headers, signal: controller.signal });
   } catch (err: unknown) {

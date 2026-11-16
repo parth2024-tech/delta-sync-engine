@@ -24,6 +24,7 @@ import { z } from "zod";
 import { getNegotiation, clearNegotiation } from "../../../../../server/negotiation-store";
 import { pruneFileVersions } from "../../../../../server/version-pruner";
 import { outboxNotifier } from "../../../../../server/outbox-notifier";
+import { CasLifecycleManager } from "../../../../../server/cas-lifecycle";
 
 const commitSchema = z.object({
   negotiationId: z.string().uuid(),
@@ -176,6 +177,11 @@ export const Route = createFileRoute("/api/public/sync/commit")({
 
             returnVal = { versionNo: nextVer, bytesSaved };
           });
+
+          // Register CAS reference counts for all chunks in the new manifest
+          await CasLifecycleManager.registerReferences(
+            manifestRows.map((r) => ({ hash: r.strongHashHex, size: r.length })),
+          );
         } catch (err: unknown) {
           if (err && typeof err === "object" && (err as { code?: string }).code === "STALE") {
             return json(

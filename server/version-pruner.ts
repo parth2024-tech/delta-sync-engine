@@ -11,6 +11,8 @@
 import { db } from "./db";
 import { files, fileVersions } from "../shared/schema";
 import { eq, desc, inArray } from "drizzle-orm";
+import { decodeChunkManifestV1 } from "../shared/chunk-manifest";
+import { CasLifecycleManager } from "./cas-lifecycle";
 
 const MAX_VERSIONS = Math.max(1, parseInt(process.env.MAX_VERSIONS_PER_FILE || "10", 10) || 10);
 
@@ -55,8 +57,32 @@ export async function pruneFileVersions(fileId: string): Promise<number> {
 
   if (toDeleteIds.length === 0) return 0;
 
+  // Retrieve manifests of versions to be deleted to decrement CAS ref counts
+  const prunedVersions = await db
+    .select({ chunkManifest: fileVersions.chunkManifest })
+    .from(fileVersions)
+    .where(inArray(fileVersions.id, toDeleteIds));
+
+  const derefHashes: string[] = [];
+  for (const v of prunedVersions) {
+    if (v.chunkManifest) {
+      try {
+        const decoded = decodeChunkManifestV1(Buffer.from(v.chunkManifest));
+        for (const c of decoded) {
+          derefHashes.push(c.strongHashHex);
+        }
+      } catch {
+        // Skip corrupted manifest
+      }
+    }
+  }
+
   // Delete all pruned versions in a single query (cascade handles blocks table)
   await db.delete(fileVersions).where(inArray(fileVersions.id, toDeleteIds));
+
+  if (derefHashes.length > 0) {
+    await CasLifecycleManager.dereference(derefHashes);
+  }
 
   console.log(
     `[Pruner] Pruned ${toDeleteIds.length} old version(s) for file ${fileId} (keeping ${keepIds.size}, max ${MAX_VERSIONS})`,

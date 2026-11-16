@@ -181,11 +181,29 @@ export const outboxEvents = sqliteTable(
     aggregateId: text("aggregate_id").notNull(),
     payload: text("payload").notNull(), // JSON-encoded event data
     processedAt: integer("processed_at", { mode: "timestamp_ms" }),
+    attempts: integer("attempts").notNull().default(0),
+    lastError: text("last_error"),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .$defaultFn(() => new Date())
       .notNull(),
   },
   (t) => [index("outbox_events_unprocessed_idx").on(t.processedAt, t.createdAt)],
+);
+
+export const casBlockIndex = sqliteTable(
+  "cas_block_index",
+  {
+    strongHash: text("strong_hash").primaryKey(), // SHA-256 hex
+    refCount: integer("ref_count").notNull().default(1),
+    byteSize: integer("byte_size").notNull(),
+    firstSeenAt: integer("first_seen_at", { mode: "timestamp_ms" })
+      .$defaultFn(() => new Date())
+      .notNull(),
+    lastReferencedAt: integer("last_referenced_at", { mode: "timestamp_ms" })
+      .$defaultFn(() => new Date())
+      .notNull(),
+  },
+  (t) => [index("cas_block_index_ref_count_idx").on(t.refCount, t.lastReferencedAt)],
 );
 
 export const gcRuns = sqliteTable("gc_runs", {
@@ -236,3 +254,4 @@ export type ApiKey = typeof apiKeys.$inferSelect;
 export type OutboxEvent = typeof outboxEvents.$inferSelect;
 export type GcRun = typeof gcRuns.$inferSelect;
 export type Negotiation = typeof negotiations.$inferSelect;
+export type CasBlockIndex = typeof casBlockIndex.$inferSelect;

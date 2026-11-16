@@ -25,6 +25,7 @@ import { gcRuns, blocks, fileVersions } from "../shared/schema";
 import { decodeChunkManifestV1 } from "../shared/chunk-manifest";
 import { eq, gt, asc, isNotNull } from "drizzle-orm";
 import { getS3Key } from "../shared/hash";
+import { CasLifecycleManager } from "./cas-lifecycle";
 
 const s3 = new S3Client({
   region: process.env.S3_REGION || "auto",
@@ -244,14 +245,17 @@ export async function runGarbageCollection() {
   const startTime = Date.now();
 
   try {
-    // Phase 1: Build reference set from database (all referenced chunk hashes)
-    const hashSet = await buildReferenceSet();
+    // Phase 1: Fast transactional CAS Mark-Sweep for zero-reference quarantined blocks
+    let deletedCount = await CasLifecycleManager.sweepQuarantinedBlocks();
 
-    // Phase 2: Reconcile S3 against the reference set
-    const deletedCount = await reconcileWithInventory(hashSet);
-
-    // Clean up the hash set memory
-    hashSet.clear();
+    // Phase 2: If S3 Inventory is configured, reconcile full bucket
+    if (INVENTORY_BUCKET && INVENTORY_KEY) {
+      const hashSet = await buildReferenceSet();
+      deletedCount += await reconcileWithInventory(hashSet);
+      hashSet.clear();
+    } else {
+      console.log("[GC] S3 Inventory not configured. CAS reference-counted sweep complete.");
+    }
 
     const elapsedMs = Date.now() - startTime;
 
