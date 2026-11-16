@@ -17,10 +17,10 @@ import { createFileRoute } from "@tanstack/react-router";
 import type {} from "@tanstack/react-start";
 import { validateApiKey } from "@/lib/api-key-auth";
 import { db } from "../../../../../server/db";
-import { files, fileVersions } from "../../../../../shared/schema";
+import { files, fileVersions, casBlockIndex } from "../../../../../shared/schema";
 import { loadVersionChunks } from "../../../../../server/version-chunks";
 import { createS3Limiter } from "../../../../../server/s3-limiter";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { getStorageAdapter } from "../../../../../server/storage-adapter";
 import { getS3Key } from "../../../../../shared/hash";
@@ -128,13 +128,33 @@ export const Route = createFileRoute("/api/public/sync/negotiate")({
           }
         }
 
-        // Check S3 existence in parallel batches
+        // Step 1: Query CAS Block Index table for existing chunks in sub-millisecond batches
+        const CAS_DB_BATCH = 500;
+        const remainingToCheck: string[] = [];
+        const uniqueHashesList = [...uniqueHashMap.keys()];
+
+        for (let i = 0; i < uniqueHashesList.length; i += CAS_DB_BATCH) {
+          const batch = uniqueHashesList.slice(i, i + CAS_DB_BATCH);
+          const foundRows = await db
+            .select({ strongHash: casBlockIndex.strongHash })
+            .from(casBlockIndex)
+            .where(inArray(casBlockIndex.strongHash, batch));
+          for (const row of foundRows) {
+            existingHashes.add(row.strongHash);
+          }
+          for (const hash of batch) {
+            if (!existingHashes.has(hash)) {
+              remainingToCheck.push(hash);
+            }
+          }
+        }
+
+        // Step 2: Only check storage adapter (S3/local) for hashes not in CAS index
         const BATCH_SIZE = 50;
-        const uniqueEntries = [...uniqueHashMap.entries()];
-        for (let i = 0; i < uniqueEntries.length; i += BATCH_SIZE) {
-          const batch = uniqueEntries.slice(i, i + BATCH_SIZE);
+        for (let i = 0; i < remainingToCheck.length; i += BATCH_SIZE) {
+          const batch = remainingToCheck.slice(i, i + BATCH_SIZE);
           const results = await Promise.all(
-            batch.map(async ([hash]) => ({
+            batch.map(async (hash) => ({
               hash,
               exists: await blockExists(hash),
             })),

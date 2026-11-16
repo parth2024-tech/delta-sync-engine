@@ -3,6 +3,10 @@
  */
 
 import zlib from "node:zlib";
+import fs from "node:fs";
+import crypto from "node:crypto";
+import { pipeline } from "node:stream/promises";
+import { Readable } from "node:stream";
 import type { Config } from "./config.js";
 import type { Op } from "./rsync.js";
 import { generateTraceContext, formatTraceparent, type TraceContext } from "./telemetry.js";
@@ -186,6 +190,55 @@ export async function download(cfg: Config, path: string, version?: number): Pro
   if (!r.ok) throw new Error(await r.text());
   const ab = await r.arrayBuffer();
   return Buffer.from(ab);
+}
+
+/**
+ * Downloads a file directly to disk using a bounded 64KB pipeline stream.
+ * Automatically verifies downloaded SHA-256 without buffering the whole file in RAM.
+ */
+export async function downloadToFile(
+  cfg: Config,
+  remotePath: string,
+  destinationPath: string,
+  version?: number,
+  expectedSha256?: string,
+  highWaterMark = 64 * 1024,
+): Promise<{ size: number; contentSha256: string }> {
+  const r = await fetchWithTimeout(
+    `${cfg.serverUrl}/api/public/sync/download`,
+    {
+      method: "POST",
+      headers: { ...authHeader(cfg), "Content-Type": "application/json" },
+      body: JSON.stringify({ path: remotePath, version }),
+    },
+    120000,
+  );
+  if (!r.ok) throw new Error(await r.text());
+  if (!r.body) throw new Error("Empty download response body");
+
+  const hash = crypto.createHash("sha256");
+  let totalBytes = 0;
+
+  // Stream directly to disk through crypto hash
+  const nodeReadable = Readable.fromWeb(
+    r.body as unknown as Parameters<typeof Readable.fromWeb>[0],
+  );
+  nodeReadable.on("data", (chunk: Buffer) => {
+    hash.update(chunk);
+    totalBytes += chunk.length;
+  });
+
+  const fileWriteStream = fs.createWriteStream(destinationPath, { highWaterMark });
+  await pipeline(nodeReadable, fileWriteStream);
+
+  const finalSha256 = hash.digest("hex");
+  if (expectedSha256 && finalSha256 !== expectedSha256) {
+    throw new Error(
+      `Downloaded file SHA-256 verification failed for ${destinationPath}: expected ${expectedSha256}, got ${finalSha256}`,
+    );
+  }
+
+  return { size: totalBytes, contentSha256: finalSha256 };
 }
 
 export interface FileInfo {

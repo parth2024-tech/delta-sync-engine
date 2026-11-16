@@ -14,7 +14,15 @@ import {
   setSessionFileState,
   updateSyncSessionState,
 } from "./db.js";
-import { buildSignatures, adaptiveChunkSize, contentHash } from "./rsync.js";
+import {
+  buildSignatures,
+  buildSignaturesFromFile,
+  adaptiveChunkSize,
+  contentHash,
+  contentHashFile,
+  readChunkSlice,
+} from "./rsync.js";
+import { sha256Hex } from "../../shared/hash.js";
 import * as api from "./api.js";
 import { fetchWithTimeout, sleepWithJitter } from "./api.js";
 import { defaultBandwidthLimiter } from "./bandwidth-shaper.js";
@@ -80,8 +88,11 @@ export async function performPush(
   const stat = statSync(filePath);
   setSessionFileState(activeSessionId, filePath, "pending", { fileSize: stat.size });
 
-  const data = readFileSync(filePath);
-  const hash = await contentHash(data);
+  // Bounded 64KB streaming hash calculation — never loads multi-gigabyte files into RAM
+  const hash =
+    stat.size <= 32 * 1024 * 1024
+      ? await contentHash(readFileSync(filePath))
+      : await contentHashFile(filePath);
   const cached = getFile(filePath);
 
   if (cached?.last_hash === hash) {
@@ -97,13 +108,13 @@ export async function performPush(
   let negotiationId: string | null = null;
   let missingChunks: { strongHash: string; uploadUrl: string }[] = [];
 
-  const adaptiveSize = adaptiveChunkSize(data.length);
+  const adaptiveSize = adaptiveChunkSize(stat.size);
   const blockSize = adaptiveSize > 0 ? adaptiveSize : 16384;
 
   console.log(
     `Building variable signatures for ${filePath} (CDC average: ${fmtBytes(blockSize)})…`,
   );
-  const sigs = await buildSignatures(data, { chunking: "cdc", blockSize });
+  const sigs = await buildSignaturesFromFile(filePath, { chunking: "cdc", blockSize });
 
   // Map signatures to negotiate schema chunks list
   const chunkList = sigs.map((s) => ({
@@ -138,7 +149,7 @@ export async function performPush(
       path: filePath,
       chunking: "cdc",
       blockSize,
-      newSize: data.length,
+      newSize: stat.size,
       contentSha256: hash,
       chunks: chunkList,
     });
@@ -202,7 +213,6 @@ export async function performPush(
           if (!chunk) break;
 
           activeWorkers++;
-          const chunkData = data.subarray(chunk.offset, chunk.offset + chunk.length);
 
           (async () => {
             let attempts = 3;
@@ -210,12 +220,23 @@ export async function performPush(
 
             while (attempts > 0 && !uploadError) {
               try {
+                // Read slice on-demand directly from disk (strictly bounded heap usage)
+                const chunkData = await readChunkSlice(filePath, chunk.offset, chunk.length);
+
+                // Cryptographic validation before transmission
+                const localHash = await sha256Hex(chunkData);
+                if (localHash !== chunk.strongHash) {
+                  throw new Error(
+                    `Cryptographic mismatch for chunk at offset ${chunk.offset}: expected ${chunk.strongHash}, got ${localHash}`,
+                  );
+                }
+
                 await defaultBandwidthLimiter.consume(chunk.length);
                 const r = await fetchWithTimeout(
                   chunk.uploadUrl,
                   {
                     method: "PUT",
-                    body: chunkData,
+                    body: new Uint8Array(chunkData),
                     headers: {
                       "Content-Type": "application/octet-stream",
                       "Content-Length": String(chunk.length),
@@ -310,7 +331,7 @@ export async function performPush(
     uploadedChunks: chunkList.length,
   });
   updateSyncSessionState(activeSessionId, "completed");
-  const savedPct = data.length > 0 ? Math.round((commitResult.bytesSaved / data.length) * 100) : 0;
+  const savedPct = stat.size > 0 ? Math.round((commitResult.bytesSaved / stat.size) * 100) : 0;
   console.log(
     `✓ pushed v${commitResult.versionNo} — saved ${fmtBytes(commitResult.bytesSaved)} (${savedPct}%)`,
   );

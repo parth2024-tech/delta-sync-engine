@@ -6,14 +6,19 @@
  */
 
 import { getStorageAdapter } from "./storage-adapter";
-import { getS3Key } from "../shared/hash";
+import { getS3Key, sha256Hex } from "../shared/hash";
 import logger from "pino";
 
 const log = logger({ level: process.env.LOG_LEVEL || "info" });
 
 export class BlockStoreError extends Error {
   constructor(
-    public code: "NOT_FOUND" | "PERMISSION_DENIED" | "SERVER_ERROR" | "NETWORK_ERROR",
+    public code:
+      | "NOT_FOUND"
+      | "PERMISSION_DENIED"
+      | "SERVER_ERROR"
+      | "NETWORK_ERROR"
+      | "CORRUPT_BLOCK",
     message: string,
     public originalError?: unknown,
   ) {
@@ -24,6 +29,14 @@ export class BlockStoreError extends Error {
 
 /** Persist a block. No-op if already stored (content-addressed = immutable). */
 export async function storeBlock(hash: string, data: Uint8Array): Promise<void> {
+  const computedHash = await sha256Hex(data);
+  if (computedHash !== hash) {
+    throw new BlockStoreError(
+      "CORRUPT_BLOCK",
+      `Ingestion strong hash mismatch for block ${hash}: computed ${computedHash}`,
+    );
+  }
+
   if (await hasBlock(hash)) {
     return;
   }
@@ -56,12 +69,19 @@ export async function storeBlock(hash: string, data: Uint8Array): Promise<void> 
   }
 }
 
-/** Retrieve a block by its SHA-256 hash. Throws if not found. */
+/** Retrieve a block by its SHA-256 hash. Throws if not found or corrupted. */
 export async function fetchBlock(hash: string): Promise<Uint8Array> {
   try {
     const adapter = getStorageAdapter();
     const buf = await adapter.getObject(getS3Key(hash));
-    log.debug({ hash, size: buf.length }, "Block fetched");
+    const computedHash = await sha256Hex(buf);
+    if (computedHash !== hash) {
+      throw new BlockStoreError(
+        "CORRUPT_BLOCK",
+        `Bit-rot corruption detected in block ${hash}: computed ${computedHash}`,
+      );
+    }
+    log.debug({ hash, size: buf.length }, "Block fetched and verified");
     return buf;
   } catch (err: unknown) {
     if (err instanceof BlockStoreError) {

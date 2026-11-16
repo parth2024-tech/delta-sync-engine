@@ -12,7 +12,7 @@
 import { readFileSync, writeFileSync, existsSync, statSync } from "fs";
 import { readConfig } from "./config.js";
 import { getFile, upsertFile, listFiles as listCachedFiles } from "./db.js";
-import { contentHash } from "./rsync.js";
+import { contentHash, contentHashFile } from "./rsync.js";
 import * as api from "./api.js";
 import { performPush } from "./push.js";
 
@@ -56,11 +56,14 @@ async function syncFile(
     // Server unreachable or file not found
   }
 
-  // Compute local hash if file exists
+  // Compute local hash if file exists (using bounded 64KB streaming for large files)
   let localHash: string | null = null;
   if (localExists) {
-    const data = readFileSync(filePath);
-    localHash = await contentHash(data);
+    const stat = statSync(filePath);
+    localHash =
+      stat.size <= 32 * 1024 * 1024
+        ? await contentHash(readFileSync(filePath))
+        : await contentHashFile(filePath);
   }
 
   const ancestorHash = cached?.last_hash ?? null;
@@ -100,10 +103,14 @@ async function syncFile(
   if (!localChanged && serverChanged) {
     console.log(`  ↓ ${filePath} — server changes, pulling…`);
     try {
-      const buf = await api.download(cfg, filePath);
-      writeFileSync(filePath, buf);
-      const hash = await contentHash(buf);
-      upsertFile(filePath, Date.now(), buf.length, hash, serverInfo!.versionNo);
+      const { size, contentSha256 } = await api.downloadToFile(
+        cfg,
+        filePath,
+        filePath,
+        serverInfo!.versionNo,
+        serverInfo!.contentSha256,
+      );
+      upsertFile(filePath, Date.now(), size, contentSha256, serverInfo!.versionNo);
       return "pulled";
     } catch (err) {
       console.error(`  ✗ Failed to pull ${filePath}:`, err);
@@ -126,10 +133,14 @@ async function syncFile(
     if (opts.forcePull) {
       console.log(`  ⚠ ${filePath} — conflict resolved: force-pull`);
       try {
-        const buf = await api.download(cfg, filePath);
-        writeFileSync(filePath, buf);
-        const hash = await contentHash(buf);
-        upsertFile(filePath, Date.now(), buf.length, hash, serverInfo!.versionNo);
+        const { size, contentSha256 } = await api.downloadToFile(
+          cfg,
+          filePath,
+          filePath,
+          serverInfo!.versionNo,
+          serverInfo!.contentSha256,
+        );
+        upsertFile(filePath, Date.now(), size, contentSha256, serverInfo!.versionNo);
         return "pulled";
       } catch (err) {
         console.error(`  ✗ Failed to force-pull ${filePath}:`, err);

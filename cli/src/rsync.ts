@@ -12,6 +12,8 @@
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import fs from "node:fs";
+import crypto from "node:crypto";
 
 import { cdcRanges } from "../../shared/fastcdc.js";
 import { adler32, sha256Hex } from "../../shared/hash.js";
@@ -295,4 +297,154 @@ async function computeDeltaCdc(
 
 export async function contentHash(data: Buffer): Promise<string> {
   return nativeAddon.isNative ? nativeAddon.sha256Native(data) : sha256Hex(data);
+}
+
+/**
+ * Computes SHA-256 for a file of arbitrary size (MBs to TBs) using bounded 64KB streaming.
+ * Memory allocated: strictly <= 64 KB, eliminating OOM.
+ */
+export async function contentHashFile(filePath: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash("sha256");
+    const stream = fs.createReadStream(filePath, { highWaterMark: 64 * 1024 });
+    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("end", () => resolve(hash.digest("hex")));
+    stream.on("error", reject);
+  });
+}
+
+/**
+ * Reads a single chunk slice on-demand directly from disk.
+ * Allows parallel uploads of multi-gigabyte files without holding the entire file in RAM.
+ */
+export async function readChunkSlice(
+  filePath: string,
+  offset: number,
+  length: number,
+): Promise<Buffer> {
+  const fd = await fs.promises.open(filePath, "r");
+  try {
+    const buf = Buffer.allocUnsafe(length);
+    const { bytesRead } = await fd.read(buf, 0, length, offset);
+    return bytesRead === length ? buf : buf.subarray(0, bytesRead);
+  } finally {
+    await fd.close();
+  }
+}
+
+/**
+ * Generates chunk signatures for a file of arbitrary size.
+ * For small files (< 32 MB), loads into memory for max speed.
+ * For large files (>= 32 MB), processes via a bounded 2 MB sliding buffer.
+ */
+export async function buildSignaturesFromFile(
+  filePath: string,
+  opts: BuildSigOpts,
+): Promise<Signature[]> {
+  const stat = fs.statSync(filePath);
+  if (stat.size <= 32 * 1024 * 1024) {
+    const data = fs.readFileSync(filePath);
+    return buildSignatures(data, opts);
+  }
+
+  // Large-file streaming window chunking (bounded to 2 MB heap)
+  const fd = await fs.promises.open(filePath, "r");
+  const WINDOW_SIZE = 2 * 1024 * 1024;
+  const windowBuf = Buffer.allocUnsafe(WINDOW_SIZE);
+  let bytesInWindow = 0;
+  let fileOffset = 0;
+  let globalChunkOffset = 0;
+  const sigs: Signature[] = [];
+  let blockIndex = 0;
+
+  try {
+    while (fileOffset < stat.size || bytesInWindow > 0) {
+      if (bytesInWindow < WINDOW_SIZE && fileOffset < stat.size) {
+        const toRead = Math.min(WINDOW_SIZE - bytesInWindow, stat.size - fileOffset);
+        const { bytesRead } = await fd.read(windowBuf, bytesInWindow, toRead, fileOffset);
+        bytesInWindow += bytesRead;
+        fileOffset += bytesRead;
+      }
+
+      if (bytesInWindow === 0) break;
+
+      const activeSlice = windowBuf.subarray(0, bytesInWindow);
+      const isEof = fileOffset >= stat.size;
+
+      if (opts.chunking === "fixed") {
+        const blockSize = opts.blockSize;
+        let p = 0;
+        while (p + blockSize <= bytesInWindow || (isEof && p < bytesInWindow)) {
+          const end = Math.min(p + blockSize, bytesInWindow);
+          const chunk = activeSlice.subarray(p, end);
+          sigs.push({
+            blockIndex: blockIndex++,
+            weakHash: nativeAddon.isNative ? nativeAddon.adler32Native(chunk) : adler32(chunk),
+            strongHash: nativeAddon.isNative
+              ? await nativeAddon.sha256Native(chunk)
+              : await sha256Hex(chunk),
+            offset: globalChunkOffset,
+            length: chunk.length,
+          });
+          globalChunkOffset += chunk.length;
+          p = end;
+        }
+        if (p < bytesInWindow) {
+          windowBuf.copyWithin(0, p, bytesInWindow);
+          bytesInWindow -= p;
+        } else {
+          bytesInWindow = 0;
+        }
+      } else {
+        const avg = opts.blockSize;
+        const ends = cdcRanges(activeSlice, {
+          minSize: Math.max(512, Math.floor(avg / 4)),
+          avgSize: avg,
+          maxSize: Math.min(1024 * 1024, avg * 64),
+        });
+
+        if (ends.length === 0) {
+          if (isEof) {
+            const chunk = activeSlice;
+            sigs.push({
+              blockIndex: blockIndex++,
+              weakHash: nativeAddon.isNative ? nativeAddon.adler32Native(chunk) : adler32(chunk),
+              strongHash: nativeAddon.isNative
+                ? await nativeAddon.sha256Native(chunk)
+                : await sha256Hex(chunk),
+              offset: globalChunkOffset,
+              length: chunk.length,
+            });
+            bytesInWindow = 0;
+          }
+          break;
+        }
+
+        const processCount = isEof ? ends.length : Math.max(1, ends.length - 1);
+        let lastCut = 0;
+        for (let i = 0; i < processCount; i++) {
+          const { start, end } = ends[i]!;
+          const chunk = activeSlice.subarray(start, end);
+          sigs.push({
+            blockIndex: blockIndex++,
+            weakHash: nativeAddon.isNative ? nativeAddon.adler32Native(chunk) : adler32(chunk),
+            strongHash: nativeAddon.isNative
+              ? await nativeAddon.sha256Native(chunk)
+              : await sha256Hex(chunk),
+            offset: globalChunkOffset,
+            length: chunk.length,
+          });
+          globalChunkOffset += chunk.length;
+          lastCut = end;
+        }
+
+        windowBuf.copyWithin(0, lastCut, bytesInWindow);
+        bytesInWindow -= lastCut;
+      }
+    }
+  } finally {
+    await fd.close();
+  }
+
+  return sigs;
 }

@@ -1,9 +1,15 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
+import os from "node:os";
 import {
   adaptiveChunkSize,
   SMALL_FILE_THRESHOLD,
   contentHash,
+  contentHashFile,
+  readChunkSlice,
   buildSignatures,
+  buildSignaturesFromFile,
   computeDelta,
 } from "../cli/src/rsync.js";
 import { sha256Hex, adler32 } from "../shared/hash.js";
@@ -173,6 +179,58 @@ describe("CLI Rsync & CDC Engine", () => {
       expect(copyCount).toBeGreaterThan(0);
       const literalCount = deltaAppended.ops.filter((op) => op.type === "literal").length;
       expect(literalCount).toBeGreaterThan(0);
+    });
+  });
+
+  describe("Zero-Copy Streaming File Operations", () => {
+    const tmpDir = path.join(os.tmpdir(), "deltasync-stream-test-" + Date.now());
+    const tmpFile = path.join(tmpDir, "large-sample.bin");
+
+    beforeAll(() => {
+      fs.mkdirSync(tmpDir, { recursive: true });
+      // Create a 256 KB test file
+      const buf = Buffer.alloc(256 * 1024);
+      for (let i = 0; i < buf.length; i++) {
+        buf[i] = (i * 31) & 0xff;
+      }
+      fs.writeFileSync(tmpFile, buf);
+    });
+
+    afterAll(() => {
+      if (fs.existsSync(tmpDir)) {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("computes streaming contentHashFile matching whole-buffer hash", async () => {
+      const wholeBuf = fs.readFileSync(tmpFile);
+      const expected = await sha256Hex(wholeBuf);
+      const streamedHash = await contentHashFile(tmpFile);
+      expect(streamedHash).toBe(expected);
+    });
+
+    it("reads chunk slice on-demand directly from disk", async () => {
+      const slice = await readChunkSlice(tmpFile, 1024, 2048);
+      expect(slice.length).toBe(2048);
+
+      const wholeBuf = fs.readFileSync(tmpFile);
+      expect(slice).toEqual(wholeBuf.subarray(1024, 3072));
+    });
+
+    it("builds signatures from file matching memory signatures", async () => {
+      const wholeBuf = fs.readFileSync(tmpFile);
+      const memSigs = await buildSignatures(wholeBuf, { chunking: "fixed", blockSize: 4096 });
+      const fileSigs = await buildSignaturesFromFile(tmpFile, {
+        chunking: "fixed",
+        blockSize: 4096,
+      });
+
+      expect(fileSigs.length).toBe(memSigs.length);
+      for (let i = 0; i < memSigs.length; i++) {
+        expect(fileSigs[i]!.strongHash).toBe(memSigs[i]!.strongHash);
+        expect(fileSigs[i]!.offset).toBe(memSigs[i]!.offset);
+        expect(fileSigs[i]!.length).toBe(memSigs[i]!.length);
+      }
     });
   });
 });

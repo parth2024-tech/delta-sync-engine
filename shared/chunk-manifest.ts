@@ -29,7 +29,7 @@ function hex32(buf: Uint8Array, off: number): string {
 
 export function encodeChunkManifestV1(chunks: Omit<ManifestChunk, "blockIndex">[]): Buffer {
   const count = chunks.length;
-  const row = 4 + 4 + 4 + 4 + 32; // offset, len, weak, strong
+  const row = 4 + 4 + 4 + 32; // offset(4), length(4), weakHash(4), strongHash(32) = 44 bytes
   const buf = Buffer.allocUnsafe(8 + count * row);
   buf.set(MANIFEST_MAGIC, 0);
   buf.writeUInt32LE(count, 4);
