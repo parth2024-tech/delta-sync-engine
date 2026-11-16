@@ -43,11 +43,7 @@ export interface NativeBridge {
   cdcChunkAndHash(data: Uint8Array, avgSize?: number): Promise<CdcHashResult>;
 
   /** Hash a batch of literal chunks defined by offset/length arrays. */
-  hashLiteralChunks(
-    data: Uint8Array,
-    offsets: number[],
-    lengths: number[],
-  ): Promise<ChunkResult[]>;
+  hashLiteralChunks(data: Uint8Array, offsets: number[], lengths: number[]): Promise<ChunkResult[]>;
 }
 
 // ── Pure TypeScript Fallback ──────────────────────────────────────────────────
@@ -67,10 +63,7 @@ const tsFallback: NativeBridge = {
     return sha256HexSync(data);
   },
 
-  async cdcChunkAndHash(
-    data: Uint8Array,
-    avgSize = 16384,
-  ): Promise<CdcHashResult> {
+  async cdcChunkAndHash(data: Uint8Array, avgSize = 16384): Promise<CdcHashResult> {
     const contentSha256 = sha256HexSync(data);
 
     const ends = cdcChunkEnds(data, {
@@ -139,8 +132,8 @@ function loadNativeAddon(): NativeBridge {
   } catch (e) {
     console.warn(
       `[NativeBridge] ⚠ Rust addon not found, using TypeScript fallback. ` +
-      `Build with: cd native && npm run build\n` +
-      `  Reason: ${(e as Error).message}`,
+        `Build with: cd native && npm run build\n` +
+        `  Reason: ${(e as Error).message}`,
     );
     return tsFallback;
   }

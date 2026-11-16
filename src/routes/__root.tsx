@@ -73,10 +73,18 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
       { title: "Deltasync — Delta-Based File Synchronization Engine" },
-      { name: "description", content: "Sync large files over slow networks by transferring only the changed bytes. Rolling-hash rsync engine with a live in-browser demo." },
+      {
+        name: "description",
+        content:
+          "Sync large files over slow networks by transferring only the changed bytes. Rolling-hash rsync engine with a live in-browser demo.",
+      },
       { name: "author", content: "Deltasync" },
       { property: "og:title", content: "Deltasync — only the bytes that changed" },
-      { property: "og:description", content: "A high-performance delta-based file sync engine using Adler-32 rolling hash and SHA-256 block verification." },
+      {
+        property: "og:description",
+        content:
+          "A high-performance delta-based file sync engine using Adler-32 rolling hash and SHA-256 block verification.",
+      },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
       { name: "twitter:site", content: "@deltasync" },
@@ -84,7 +92,10 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     links: [
       { rel: "preconnect", href: "https://fonts.googleapis.com" },
       { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
-      { rel: "stylesheet", href: "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" },
+      {
+        rel: "stylesheet",
+        href: "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap",
+      },
       { rel: "icon", href: "data:image/x-icon;," },
       { rel: "stylesheet", href: appCss },
     ],

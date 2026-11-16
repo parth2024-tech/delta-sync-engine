@@ -12,10 +12,7 @@ import { db } from "./db";
 import { files, fileVersions } from "../shared/schema";
 import { eq, desc, inArray } from "drizzle-orm";
 
-const MAX_VERSIONS = Math.max(
-  1,
-  parseInt(process.env.MAX_VERSIONS_PER_FILE || "10", 10) || 10,
-);
+const MAX_VERSIONS = Math.max(1, parseInt(process.env.MAX_VERSIONS_PER_FILE || "10", 10) || 10);
 
 /**
  * Prune old versions for a given file, keeping at most MAX_VERSIONS_PER_FILE.
@@ -25,17 +22,19 @@ const MAX_VERSIONS = Math.max(
  */
 export async function pruneFileVersions(fileId: string): Promise<number> {
   // Get the file's current version pointer
-  const [file] = await db.select({ currentVersionId: files.currentVersionId })
+  const [file] = await db
+    .select({ currentVersionId: files.currentVersionId })
     .from(files)
     .where(eq(files.id, fileId));
 
   if (!file) return 0;
 
   // Get all versions ordered by versionNo descending (newest first)
-  const allVersions = await db.select({
-    id: fileVersions.id,
-    versionNo: fileVersions.versionNo,
-  })
+  const allVersions = await db
+    .select({
+      id: fileVersions.id,
+      versionNo: fileVersions.versionNo,
+    })
     .from(fileVersions)
     .where(eq(fileVersions.fileId, fileId))
     .orderBy(desc(fileVersions.versionNo));
@@ -45,18 +44,14 @@ export async function pruneFileVersions(fileId: string): Promise<number> {
   // Determine which versions to keep:
   // 1. The N most recent by versionNo
   // 2. Always the currentVersionId (even if it's outside the top N)
-  const keepIds = new Set(
-    allVersions.slice(0, MAX_VERSIONS).map((v) => v.id),
-  );
+  const keepIds = new Set(allVersions.slice(0, MAX_VERSIONS).map((v) => v.id));
 
   if (file.currentVersionId) {
     keepIds.add(file.currentVersionId);
   }
 
   // Collect IDs to delete
-  const toDeleteIds = allVersions
-    .filter((v) => !keepIds.has(v.id))
-    .map((v) => v.id);
+  const toDeleteIds = allVersions.filter((v) => !keepIds.has(v.id)).map((v) => v.id);
 
   if (toDeleteIds.length === 0) return 0;
 

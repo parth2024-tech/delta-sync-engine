@@ -17,25 +17,25 @@ export async function loadVersionChunks(
   const sigs = await dbClient
     .select({
       blockIndex: schema.blocks.blockIndex,
-      weakHash:   schema.blocks.weakHash,
+      weakHash: schema.blocks.weakHash,
       strongHash: schema.blocks.strongHash,
     })
     .from(schema.blocks)
     .where(eq(schema.blocks.versionId, versionId))
     .orderBy(asc(schema.blocks.blockIndex));
 
-  const bs       = versionRow.blockSize;
+  const bs = versionRow.blockSize;
   const fileSize = Number(versionRow.size);
 
   return sigs.map((s) => {
     const offset = s.blockIndex * bs;
     const length = Math.min(bs, fileSize - offset);
     return {
-      blockIndex:     s.blockIndex,
+      blockIndex: s.blockIndex,
       offset,
       length,
-      weakHash:       Number(s.weakHash),
-      strongHashHex:  s.strongHash,
+      weakHash: Number(s.weakHash),
+      strongHashHex: s.strongHash,
     };
   });
 }

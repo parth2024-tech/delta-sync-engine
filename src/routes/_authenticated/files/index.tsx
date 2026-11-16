@@ -21,11 +21,11 @@ function FilesPage() {
 
   const { data, isLoading } = useQuery({
     queryKey: ["files", page],
-    queryFn:  () => listFiles({ data: { page, pageSize: 20 } }),
+    queryFn: () => listFiles({ data: { page, pageSize: 20 } }),
   });
 
-  const filtered = (data ?? []).filter((f) =>
-    !search || f.path.toLowerCase().includes(search.toLowerCase())
+  const filtered = (data ?? []).filter(
+    (f) => !search || f.path.toLowerCase().includes(search.toLowerCase()),
   );
 
   return (
@@ -34,7 +34,8 @@ function FilesPage() {
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <h1 className="text-3xl font-bold">Files</h1>
         <input
-          value={search} onChange={(e) => setSearch(e.target.value)}
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
           placeholder="Filter by path…"
           className="rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary w-64"
         />
@@ -47,7 +48,9 @@ function FilesPage() {
           </div>
         ) : filtered.length === 0 ? (
           <div className="p-10 text-center">
-            <p className="font-mono text-sm text-muted-foreground">No files yet. Push your first file using the CLI.</p>
+            <p className="font-mono text-sm text-muted-foreground">
+              No files yet. Push your first file using the CLI.
+            </p>
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -55,7 +58,12 @@ function FilesPage() {
               <thead>
                 <tr className="border-b border-border">
                   {["Path", "Size", "Last synced", ""].map((h) => (
-                    <th key={h} className="px-4 py-3 text-left font-mono text-[10px] uppercase tracking-widest text-muted-foreground">{h}</th>
+                    <th
+                      key={h}
+                      className="px-4 py-3 text-left font-mono text-[10px] uppercase tracking-widest text-muted-foreground"
+                    >
+                      {h}
+                    </th>
                   ))}
                 </tr>
               </thead>
@@ -69,7 +77,8 @@ function FilesPage() {
                     </td>
                     <td className="px-4 py-3 text-right">
                       <Link
-                        to="/files/$fileId" params={{ fileId: f.id }}
+                        to="/files/$fileId"
+                        params={{ fileId: f.id }}
                         className="font-mono text-xs text-primary hover:underline"
                       >
                         detail →
@@ -88,13 +97,17 @@ function FilesPage() {
           disabled={page <= 1}
           onClick={() => setPage((p) => p - 1)}
           className="rounded border border-border px-3 py-1 font-mono text-xs disabled:opacity-40"
-        >← prev</button>
+        >
+          ← prev
+        </button>
         <span className="font-mono text-xs text-muted-foreground">page {page}</span>
         <button
           disabled={(data ?? []).length < 20}
           onClick={() => setPage((p) => p + 1)}
           className="rounded border border-border px-3 py-1 font-mono text-xs disabled:opacity-40"
-        >next →</button>
+        >
+          next →
+        </button>
       </div>
     </div>
   );

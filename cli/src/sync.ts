@@ -23,7 +23,10 @@ export interface SyncResult {
   skipped: string[];
 }
 
-export async function syncAll(paths: string[], opts: { forcePush?: boolean; forcePull?: boolean } = {}): Promise<SyncResult> {
+export async function syncAll(
+  paths: string[],
+  opts: { forcePush?: boolean; forcePull?: boolean } = {},
+): Promise<SyncResult> {
   const cfg = readConfig();
   const result: SyncResult = { pushed: [], pulled: [], conflicts: [], skipped: [] };
 

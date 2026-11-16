@@ -48,7 +48,9 @@ describe("Streaming Chunk Manifest Decoder", () => {
 
   it("throws on invalid magic bytes", () => {
     const badBuf = Buffer.from([0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
-    expect(() => decodeChunkManifestV1Streaming(badBuf, () => {})).toThrow("Invalid chunk manifest magic");
+    expect(() => decodeChunkManifestV1Streaming(badBuf, () => {})).toThrow(
+      "Invalid chunk manifest magic",
+    );
   });
 });
 

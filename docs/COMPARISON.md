@@ -12,16 +12,16 @@ rsync is a battle-tested, 30-year-old tool. It's excellent at what it does. Delt
 
 ### The real comparison
 
-| Dimension | `rsync` (over SSH) | `aws s3 sync` | **Deltasync** |
-|:---|:---|:---|:---|
-| **Bandwidth efficiency** | ★★★★★ (99%+ savings with fixed blocks) | ★☆☆☆☆ (full re-upload every time) | ★★★★☆ (90–99% savings with CDC) |
-| **Compute speed** | ★★☆☆☆ (byte-by-byte rolling window) | ★★★★★ (just uploads, no delta compute) | ★★★★☆ (single-pass CDC, 20× faster than rsync) |
-| **Memory usage** | ★★☆☆☆ (10–20 MB per 100 MB file) | ★★★★★ (streaming, minimal) | ★★★★★ (< 1 MB per 100 MB file) |
-| **S3-native** | ★☆☆☆☆ (needs SSH + s3fs/goofys mount) | ★★★★★ (native) | ★★★★★ (native, pre-signed URLs) |
-| **Small files (< 16 KB)** | ★★★★★ (4 KiB blocks match well) | ★★★☆☆ (re-uploads all) | ★★☆☆☆ (CDC chunks too coarse) |
-| **Large files (> 1 MB)** | ★★★★★ (excellent dedup) | ★☆☆☆☆ (re-uploads all) | ★★★★★ (excellent dedup, faster) |
-| **Zero server infrastructure** | ☆☆☆☆☆ (needs SSH daemon) | ★★★★★ | ★★★★☆ (needs API server, but Lite Mode is self-contained) |
-| **Content-addressed storage** | ☆☆☆☆☆ | ☆☆☆☆☆ | ★★★★★ (inherent dedup across files) |
+| Dimension                      | `rsync` (over SSH)                     | `aws s3 sync`                          | **Deltasync**                                             |
+| :----------------------------- | :------------------------------------- | :------------------------------------- | :-------------------------------------------------------- |
+| **Bandwidth efficiency**       | ★★★★★ (99%+ savings with fixed blocks) | ★☆☆☆☆ (full re-upload every time)      | ★★★★☆ (90–99% savings with CDC)                           |
+| **Compute speed**              | ★★☆☆☆ (byte-by-byte rolling window)    | ★★★★★ (just uploads, no delta compute) | ★★★★☆ (single-pass CDC, 20× faster than rsync)            |
+| **Memory usage**               | ★★☆☆☆ (10–20 MB per 100 MB file)       | ★★★★★ (streaming, minimal)             | ★★★★★ (< 1 MB per 100 MB file)                            |
+| **S3-native**                  | ★☆☆☆☆ (needs SSH + s3fs/goofys mount)  | ★★★★★ (native)                         | ★★★★★ (native, pre-signed URLs)                           |
+| **Small files (< 16 KB)**      | ★★★★★ (4 KiB blocks match well)        | ★★★☆☆ (re-uploads all)                 | ★★☆☆☆ (CDC chunks too coarse)                             |
+| **Large files (> 1 MB)**       | ★★★★★ (excellent dedup)                | ★☆☆☆☆ (re-uploads all)                 | ★★★★★ (excellent dedup, faster)                           |
+| **Zero server infrastructure** | ☆☆☆☆☆ (needs SSH daemon)               | ★★★★★                                  | ★★★★☆ (needs API server, but Lite Mode is self-contained) |
+| **Content-addressed storage**  | ☆☆☆☆☆                                  | ☆☆☆☆☆                                  | ★★★★★ (inherent dedup across files)                       |
 
 ---
 
@@ -44,6 +44,7 @@ Deltasync bypasses all of this by computing deltas locally and uploading only th
 CDC with a 16 KiB average chunk size is fundamentally unsuited for files smaller than the chunk size. When a 10 KB file is smaller than one CDC chunk, every boundary check fails and the entire file becomes a single "literal" chunk. There's no deduplication possible.
 
 **Mitigations:**
+
 - For small-file workloads, Deltasync falls back to per-file SHA-256 comparison — if the hash hasn't changed, the file isn't uploaded at all (0 bytes transferred).
 - The CLI already implements this: `cached?.last_hash === hash ? skip : upload`.
 - For mixed workloads where large files dominate the byte volume, CDC's 90%+ savings on the large files far outweigh the small-file overhead.
@@ -52,11 +53,11 @@ CDC with a 16 KiB average chunk size is fundamentally unsuited for files smaller
 
 **A:** We benchmarked it. Fixed blocks are excellent at bandwidth savings but **catastrophically slow** in pure TypeScript:
 
-| Workload | rsync Fixed-Block Time | Deltasync CDC Time | Speedup |
-|:---|---:|---:|---:|
-| 100 MB, 1% change | 67.7s | 3.3s | **20×** |
-| 10 MB small files | 28.3s | 0.5s | **56×** |
-| 58 MB mixed | 55.0s | 2.1s | **27×** |
+| Workload          | rsync Fixed-Block Time | Deltasync CDC Time | Speedup |
+| :---------------- | ---------------------: | -----------------: | ------: |
+| 100 MB, 1% change |                  67.7s |               3.3s | **20×** |
+| 10 MB small files |                  28.3s |               0.5s | **56×** |
+| 58 MB mixed       |                  55.0s |               2.1s | **27×** |
 
 The fixed-block algorithm must slide a window byte-by-byte and compute SHA-256 on every weak-hash hit. CDC scans once to find boundaries and does exactly one hash per chunk. The asymptotic difference is dramatic at scale.
 
@@ -64,13 +65,13 @@ The fixed-block algorithm must slide a window byte-by-byte and compute SHA-256 o
 
 ### Q: `aws s3 sync` is faster in wall-clock time. Why would I use Deltasync?
 
-**A:** `aws s3 sync` is faster only because it does zero computation — it just uploads the entire file. On a fast local network, this is fine. But consider the *real* cost:
+**A:** `aws s3 sync` is faster only because it does zero computation — it just uploads the entire file. On a fast local network, this is fine. But consider the _real_ cost:
 
-| Scenario | `aws s3 sync` | Deltasync CDC |
-|:---|---:|---:|
-| 1 GB file, 1% change, 100 Mbps link | **80 seconds** (uploads 1 GB) | **0.8 seconds** (uploads 10 MB) |
-| 1 GB file, 1% change, 10 Mbps link | **800 seconds** (13+ minutes!) | **8 seconds** |
-| Monthly S3 PUT cost (100 syncs/day) | ~$15/month | ~$0.15/month |
+| Scenario                            |                  `aws s3 sync` |                   Deltasync CDC |
+| :---------------------------------- | -----------------------------: | ------------------------------: |
+| 1 GB file, 1% change, 100 Mbps link |  **80 seconds** (uploads 1 GB) | **0.8 seconds** (uploads 10 MB) |
+| 1 GB file, 1% change, 10 Mbps link  | **800 seconds** (13+ minutes!) |                   **8 seconds** |
+| Monthly S3 PUT cost (100 syncs/day) |                     ~$15/month |                    ~$0.15/month |
 
 Deltasync's 3-second compute overhead is negligible compared to the network transfer time it eliminates. The breakeven point is roughly a **50 Mbps link** — below that, delta sync is faster end-to-end.
 
@@ -90,13 +91,13 @@ Deltasync's 3-second compute overhead is negligible compared to the network tran
 
 ## Bottom Line
 
-| Your Workload | Use This |
-|:---|:---|
-| Large files to S3, slow/metered network | **Deltasync** — saves 90–99% bandwidth |
-| Small files, fast LAN, SSH available | **rsync** — mature, proven, fine-grained |
+| Your Workload                            | Use This                                  |
+| :--------------------------------------- | :---------------------------------------- |
+| Large files to S3, slow/metered network  | **Deltasync** — saves 90–99% bandwidth    |
+| Small files, fast LAN, SSH available     | **rsync** — mature, proven, fine-grained  |
 | Any files, no delta needed, fast network | **aws s3 sync** — simplest, zero overhead |
-| Mixed large+small, S3-native, no SSH | **Deltasync** — best overall tradeoff |
+| Mixed large+small, S3-native, no SSH     | **Deltasync** — best overall tradeoff     |
 
 ---
 
-*Benchmark data: [`docs/BENCHMARK_RESULTS.md`](BENCHMARK_RESULTS.md) · [`benchmarks/results.json`](../benchmarks/results.json)*
+_Benchmark data: [`docs/BENCHMARK_RESULTS.md`](BENCHMARK_RESULTS.md) · [`benchmarks/results.json`](../benchmarks/results.json)_

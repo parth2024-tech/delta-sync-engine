@@ -9,7 +9,9 @@ export async function sha256Hex(input: string): Promise<string> {
     .join("");
 }
 
-export async function validateApiKey(authHeader: string | null | undefined): Promise<string | null> {
+export async function validateApiKey(
+  authHeader: string | null | undefined,
+): Promise<string | null> {
   if (!authHeader?.startsWith("Bearer ")) return null;
   const key = authHeader.slice(7).trim();
   if (!key) return null;

@@ -1,13 +1,19 @@
 {
   "compilerOptions": {
-    "target":            "ES2022",
-    "module":            "ESNext",
-    "moduleResolution":  "Bundler",
-    "outDir":            "./dist",
-    "rootDir":           "..",
-    "strict":            true,
-    "skipLibCheck":      true,
-    "esModuleInterop":   true
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "outDir": "./dist",
+    "rootDir": "..",
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true
   },
-  "include": ["src/**/*.ts", "../shared/fastcdc.ts", "../shared/chunk-manifest.ts", "../shared/hash.ts", "../shared/ops-binary.ts"]
+  "include": [
+    "src/**/*.ts",
+    "../shared/fastcdc.ts",
+    "../shared/chunk-manifest.ts",
+    "../shared/hash.ts",
+    "../shared/ops-binary.ts"
+  ]
 }

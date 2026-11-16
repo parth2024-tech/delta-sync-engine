@@ -65,7 +65,7 @@ async function pollAndDispatch(): Promise<number> {
         // Log the alert — extensible for future notification integrations
         console.warn(
           `[OutboxDispatcher] ⚠ CHUNK VERIFICATION FAILED for version ${payload.versionId}: ` +
-          `${payload.missingCount}/${payload.totalHashes} chunks missing`,
+            `${payload.missingCount}/${payload.totalHashes} chunks missing`,
         );
       } else {
         console.warn(`[OutboxDispatcher] Unknown event type: ${event.eventType}`);
@@ -80,7 +80,8 @@ async function pollAndDispatch(): Promise<number> {
 
   if (processedIds.length > 0) {
     // Mark all successfully processed events as processed in a single query
-    await db.update(outboxEvents)
+    await db
+      .update(outboxEvents)
       .set({ processedAt: new Date() })
       .where(inArray(outboxEvents.id, processedIds));
   }
@@ -103,7 +104,9 @@ async function scheduleGc() {
 }
 
 async function runDispatcherLoop() {
-  console.log(`[OutboxDispatcher] Started Lite Mode — polling every ${POLL_INTERVAL_MS}ms (with instant event wakeup)`);
+  console.log(
+    `[OutboxDispatcher] Started Lite Mode — polling every ${POLL_INTERVAL_MS}ms (with instant event wakeup)`,
+  );
 
   // Schedule daily GC timer
   const gcTimer = setInterval(() => {
@@ -139,8 +142,12 @@ async function runDispatcherLoop() {
   console.log("[OutboxDispatcher] Shutting down...");
 }
 
-process.on("SIGINT", () => { running = false; });
-process.on("SIGTERM", () => { running = false; });
+process.on("SIGINT", () => {
+  running = false;
+});
+process.on("SIGTERM", () => {
+  running = false;
+});
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   runDispatcherLoop().catch((err) => {

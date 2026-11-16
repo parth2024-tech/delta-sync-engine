@@ -23,14 +23,14 @@ function Index() {
                 rsync algorithm · adler-32 + sha-256
               </div>
               <h1 className="font-display text-5xl font-bold leading-[1.05] tracking-tight lg:text-6xl">
-                Send only the<br />
+                Send only the
+                <br />
                 <span className="text-primary">bytes that changed.</span>
               </h1>
               <p className="mt-6 max-w-xl text-lg leading-relaxed text-muted-foreground">
-                Deltasync is a delta-based file synchronization engine. It uses a
-                rolling Adler-32 hash to detect shifted content in O(1) per byte,
-                then verifies matches with SHA-256 — so a 4&nbsp;GB file with a
-                1% edit transfers in 40&nbsp;MB, not 4&nbsp;GB.
+                Deltasync is a delta-based file synchronization engine. It uses a rolling Adler-32
+                hash to detect shifted content in O(1) per byte, then verifies matches with SHA-256
+                — so a 4&nbsp;GB file with a 1% edit transfers in 40&nbsp;MB, not 4&nbsp;GB.
               </p>
               <div className="mt-8 flex flex-wrap gap-3">
                 <Link
@@ -48,15 +48,21 @@ function Index() {
               </div>
               <dl className="mt-10 grid grid-cols-3 gap-6 border-t border-border pt-6 font-mono text-sm">
                 <div>
-                  <dt className="text-xs uppercase tracking-widest text-muted-foreground">block size</dt>
+                  <dt className="text-xs uppercase tracking-widest text-muted-foreground">
+                    block size
+                  </dt>
                   <dd className="mt-1 text-xl text-foreground">1 KiB</dd>
                 </div>
                 <div>
-                  <dt className="text-xs uppercase tracking-widest text-muted-foreground">weak hash</dt>
+                  <dt className="text-xs uppercase tracking-widest text-muted-foreground">
+                    weak hash
+                  </dt>
                   <dd className="mt-1 text-xl text-foreground">adler-32</dd>
                 </div>
                 <div>
-                  <dt className="text-xs uppercase tracking-widest text-muted-foreground">verify</dt>
+                  <dt className="text-xs uppercase tracking-widest text-muted-foreground">
+                    verify
+                  </dt>
                   <dd className="mt-1 text-xl text-foreground">sha-256</dd>
                 </div>
               </dl>
@@ -70,12 +76,14 @@ function Index() {
                   <span className="text-reuse">● success</span>
                 </div>
                 <pre className="whitespace-pre-wrap leading-relaxed text-muted-foreground">
-{`scanning 4,194,304 bytes ........ 4096 blocks
+                  {`scanning 4,194,304 bytes ........ 4096 blocks
 fetching remote signatures ...... 4096 sigs
 computing delta ................. 41 changed
 `}
-<span className="text-foreground">transferred       42,128 bytes</span>{`
-`}<span className="text-primary">saved          4,152,176 bytes  (98.99%)</span>
+                  <span className="text-foreground">transferred 42,128 bytes</span>
+                  {`
+`}
+                  <span className="text-primary">saved 4,152,176 bytes (98.99%)</span>
                 </pre>
               </div>
             </div>
@@ -120,13 +128,21 @@ computing delta ................. 41 changed
           </h2>
           <div className="overflow-x-auto rounded-lg border border-border bg-card/40 p-8">
             <pre className="font-mono text-[13px] leading-relaxed text-muted-foreground">
-{` ┌────────────────┐         delta protocol          ┌────────────────┐
- │  `}<span className="text-foreground">Client (CLI)</span>{`  │  ──────── HTTPS / WS ────────▶  │  `}<span className="text-foreground">Sync Server</span>{`   │
+              {` ┌────────────────┐         delta protocol          ┌────────────────┐
+ │  `}
+              <span className="text-foreground">Client (CLI)</span>
+              {`  │  ──────── HTTPS / WS ────────▶  │  `}
+              <span className="text-foreground">Sync Server</span>
+              {`   │
  │  + SQLite      │                                 │  + Object Store│
- │  + `}<span className="text-primary">Rolling Hash</span>{`│  ◀──── block signatures ─────   │  + Postgres    │
+ │  + `}
+              <span className="text-primary">Rolling Hash</span>
+              {`│  ◀──── block signatures ─────   │  + Postgres    │
  └────────────────┘                                 └────────────────┘
          │                                                    │
-         └─────────── `}<span className="text-primary">Web Dashboard</span>{` ─────────────────────┘
+         └─────────── `}
+              <span className="text-primary">Web Dashboard</span>
+              {` ─────────────────────┘
                   monitors jobs, files, versions, savings`}
             </pre>
           </div>
@@ -145,22 +161,18 @@ computing delta ................. 41 changed
 const STEPS = [
   {
     title: "Chunk & sign",
-    body:
-      "The server stores a packed chunk manifest per version (content-defined or fixed-size). Each chunk has a weak Adler-32 hash and a strong SHA-256 hash; object bytes live in the block-store.",
+    body: "The server stores a packed chunk manifest per version (content-defined or fixed-size). Each chunk has a weak Adler-32 hash and a strong SHA-256 hash; object bytes live in the block-store.",
   },
   {
     title: "Match on the client",
-    body:
-      "The CLI cuts the new file with CDC (or a rolling fixed window for legacy files), buckets weak hashes, and confirms matches with SHA-256 before emitting COPY vs LITERAL ops.",
+    body: "The CLI cuts the new file with CDC (or a rolling fixed window for legacy files), buckets weak hashes, and confirms matches with SHA-256 before emitting COPY vs LITERAL ops.",
   },
   {
     title: "Two-level match",
-    body:
-      "On a 16-bit weak hit, verify with SHA-256. A confirmed match emits a COPY op; otherwise the region becomes a literal run.",
+    body: "On a 16-bit weak hit, verify with SHA-256. A confirmed match emits a COPY op; otherwise the region becomes a literal run.",
   },
   {
     title: "Stream the delta",
-    body:
-      "Only literal runs travel over the wire. The server replays COPY + LITERAL ops against its block-store to reconstruct the new file.",
+    body: "Only literal runs travel over the wire. The server replays COPY + LITERAL ops against its block-store to reconstruct the new file.",
   },
 ];

@@ -31,8 +31,7 @@ export function rollAdler32(state: Adler32State, outByte: number, inByte: number
   const { blockSize } = state;
   // Add MOD_ADLER * blockSize keeps values positive before %.
   const a = (state.a - outByte + inByte + MOD_ADLER) % MOD_ADLER;
-  const b =
-    (state.b - blockSize * outByte + a - 1 + MOD_ADLER * (blockSize + 1)) % MOD_ADLER;
+  const b = (state.b - blockSize * outByte + a - 1 + MOD_ADLER * (blockSize + 1)) % MOD_ADLER;
   return { a, b, blockSize };
 }
 

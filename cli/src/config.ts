@@ -1,12 +1,12 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
 import { join } from "path";
 
-const DIR  = ".deltasync";
+const DIR = ".deltasync";
 const FILE = join(DIR, "config.json");
 
 export interface Config {
   serverUrl: string;
-  apiKey:    string;
+  apiKey: string;
 }
 
 export function configExists() {

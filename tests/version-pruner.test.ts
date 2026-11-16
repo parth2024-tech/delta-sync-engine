@@ -56,14 +56,16 @@ function seedVersions(db: ReturnType<typeof drizzle>, fileId: string, count: num
   for (let i = 1; i <= count; i++) {
     const id = `ver-${i}-${crypto.randomUUID().slice(0, 8)}`;
     ids.push(id);
-    db.insert(schema.fileVersions).values({
-      id,
-      fileId,
-      versionNo: i,
-      size: 1024 * i,
-      createdAt: new Date(now + i * 1000),
-      verificationStatus: "verified",
-    }).run();
+    db.insert(schema.fileVersions)
+      .values({
+        id,
+        fileId,
+        versionNo: i,
+        size: 1024 * i,
+        createdAt: new Date(now + i * 1000),
+        verificationStatus: "verified",
+      })
+      .run();
   }
   return ids;
 }
@@ -81,29 +83,37 @@ describe("Version Pruner", () => {
     fileId = crypto.randomUUID();
 
     // Seed a user and file
-    db.insert(schema.users).values({
-      id: userId,
-      email: "test@test.com",
-      passwordHash: "hash",
-      displayName: "Test",
-      createdAt: new Date(),
-    }).run();
+    db.insert(schema.users)
+      .values({
+        id: userId,
+        email: "test@test.com",
+        passwordHash: "hash",
+        displayName: "Test",
+        createdAt: new Date(),
+      })
+      .run();
 
-    db.insert(schema.files).values({
-      id: fileId,
-      userId,
-      path: "test.bin",
-      totalSize: 1024,
-      createdAt: new Date(),
-    }).run();
+    db.insert(schema.files)
+      .values({
+        id: fileId,
+        userId,
+        path: "test.bin",
+        totalSize: 1024,
+        createdAt: new Date(),
+      })
+      .run();
   });
 
   it("does nothing when versions are within the limit", async () => {
     const ids = seedVersions(db, fileId, 5);
-    db.update(schema.files).set({ currentVersionId: ids[4] }).where(eq(schema.files.id, fileId)).run();
+    db.update(schema.files)
+      .set({ currentVersionId: ids[4] })
+      .where(eq(schema.files.id, fileId))
+      .run();
 
     // Inline the pruner logic for the test DB
-    const allVersions = await db.select({ id: schema.fileVersions.id, versionNo: schema.fileVersions.versionNo })
+    const allVersions = await db
+      .select({ id: schema.fileVersions.id, versionNo: schema.fileVersions.versionNo })
       .from(schema.fileVersions)
       .where(eq(schema.fileVersions.fileId, fileId))
       .orderBy(desc(schema.fileVersions.versionNo));
@@ -118,22 +128,28 @@ describe("Version Pruner", () => {
     const ids = seedVersions(db, fileId, 15);
 
     // Set current version to the latest
-    db.update(schema.files).set({ currentVersionId: ids[14] }).where(eq(schema.files.id, fileId)).run();
+    db.update(schema.files)
+      .set({ currentVersionId: ids[14] })
+      .where(eq(schema.files.id, fileId))
+      .run();
 
-    const allVersions = await db.select({ id: schema.fileVersions.id, versionNo: schema.fileVersions.versionNo })
+    const allVersions = await db
+      .select({ id: schema.fileVersions.id, versionNo: schema.fileVersions.versionNo })
       .from(schema.fileVersions)
       .where(eq(schema.fileVersions.fileId, fileId))
       .orderBy(desc(schema.fileVersions.versionNo));
 
-    const keepIds = new Set(allVersions.slice(0, MAX).map(v => v.id));
+    const keepIds = new Set(allVersions.slice(0, MAX).map((v) => v.id));
     keepIds.add(ids[14]!); // current version
 
-    const toDelete = allVersions.filter(v => !keepIds.has(v.id));
+    const toDelete = allVersions.filter((v) => !keepIds.has(v.id));
     for (const v of toDelete) {
       await db.delete(schema.fileVersions).where(eq(schema.fileVersions.id, v.id));
     }
 
-    const remaining = await db.select().from(schema.fileVersions)
+    const remaining = await db
+      .select()
+      .from(schema.fileVersions)
       .where(eq(schema.fileVersions.fileId, fileId));
 
     expect(remaining.length).toBe(MAX);
@@ -144,62 +160,75 @@ describe("Version Pruner", () => {
     const ids = seedVersions(db, fileId, 10);
 
     // Set current version to the OLDEST (version 1)
-    db.update(schema.files).set({ currentVersionId: ids[0] }).where(eq(schema.files.id, fileId)).run();
+    db.update(schema.files)
+      .set({ currentVersionId: ids[0] })
+      .where(eq(schema.files.id, fileId))
+      .run();
 
-    const [file] = await db.select({ currentVersionId: schema.files.currentVersionId })
-      .from(schema.files).where(eq(schema.files.id, fileId));
+    const [file] = await db
+      .select({ currentVersionId: schema.files.currentVersionId })
+      .from(schema.files)
+      .where(eq(schema.files.id, fileId));
 
-    const allVersions = await db.select({ id: schema.fileVersions.id, versionNo: schema.fileVersions.versionNo })
+    const allVersions = await db
+      .select({ id: schema.fileVersions.id, versionNo: schema.fileVersions.versionNo })
       .from(schema.fileVersions)
       .where(eq(schema.fileVersions.fileId, fileId))
       .orderBy(desc(schema.fileVersions.versionNo));
 
-    const keepIds = new Set(allVersions.slice(0, MAX).map(v => v.id));
+    const keepIds = new Set(allVersions.slice(0, MAX).map((v) => v.id));
     if (file!.currentVersionId) keepIds.add(file!.currentVersionId);
 
-    const toDelete = allVersions.filter(v => !keepIds.has(v.id));
+    const toDelete = allVersions.filter((v) => !keepIds.has(v.id));
     for (const v of toDelete) {
       await db.delete(schema.fileVersions).where(eq(schema.fileVersions.id, v.id));
     }
 
-    const remaining = await db.select().from(schema.fileVersions)
+    const remaining = await db
+      .select()
+      .from(schema.fileVersions)
       .where(eq(schema.fileVersions.fileId, fileId));
 
     // Should keep MAX + 1 (the current version which is outside the top 3)
     expect(remaining.length).toBe(MAX + 1);
 
     // The current version (oldest) must be preserved
-    const currentStillExists = remaining.some(v => v.id === ids[0]);
+    const currentStillExists = remaining.some((v) => v.id === ids[0]);
     expect(currentStillExists).toBe(true);
 
     // The top 3 most recent must be preserved
-    const versionNos = remaining.map(v => v.versionNo).sort((a, b) => b - a);
+    const versionNos = remaining.map((v) => v.versionNo).sort((a, b) => b - a);
     expect(versionNos.slice(0, MAX)).toEqual([10, 9, 8]);
   });
 
   it("keeps the most recent N versions by version number", async () => {
     const MAX = 5;
     const ids = seedVersions(db, fileId, 12);
-    db.update(schema.files).set({ currentVersionId: ids[11] }).where(eq(schema.files.id, fileId)).run();
+    db.update(schema.files)
+      .set({ currentVersionId: ids[11] })
+      .where(eq(schema.files.id, fileId))
+      .run();
 
-    const allVersions = await db.select({ id: schema.fileVersions.id, versionNo: schema.fileVersions.versionNo })
+    const allVersions = await db
+      .select({ id: schema.fileVersions.id, versionNo: schema.fileVersions.versionNo })
       .from(schema.fileVersions)
       .where(eq(schema.fileVersions.fileId, fileId))
       .orderBy(desc(schema.fileVersions.versionNo));
 
-    const keepIds = new Set(allVersions.slice(0, MAX).map(v => v.id));
+    const keepIds = new Set(allVersions.slice(0, MAX).map((v) => v.id));
     keepIds.add(ids[11]!);
 
-    const toDelete = allVersions.filter(v => !keepIds.has(v.id));
+    const toDelete = allVersions.filter((v) => !keepIds.has(v.id));
     for (const v of toDelete) {
       await db.delete(schema.fileVersions).where(eq(schema.fileVersions.id, v.id));
     }
 
-    const remaining = await db.select({ versionNo: schema.fileVersions.versionNo })
+    const remaining = await db
+      .select({ versionNo: schema.fileVersions.versionNo })
       .from(schema.fileVersions)
       .where(eq(schema.fileVersions.fileId, fileId))
       .orderBy(desc(schema.fileVersions.versionNo));
 
-    expect(remaining.map(v => v.versionNo)).toEqual([12, 11, 10, 9, 8]);
+    expect(remaining.map((v) => v.versionNo)).toEqual([12, 11, 10, 9, 8]);
   });
 });

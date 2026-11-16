@@ -12,7 +12,7 @@ export const Route = createFileRoute("/_authenticated")({
 
 function AuthLayout() {
   const { user } = Route.useRouteContext();
-  const navigate  = useNavigate();
+  const navigate = useNavigate();
 
   async function handleSignOut() {
     await signOut();
@@ -25,18 +25,21 @@ function AuthLayout() {
         <div className="mx-auto flex h-14 max-w-7xl items-center justify-between px-6">
           <div className="flex items-center gap-6">
             <Link to="/" className="flex items-center gap-2 font-mono text-sm font-semibold">
-              <span className="inline-flex h-6 w-6 items-center justify-center rounded-sm bg-primary text-primary-foreground">δ</span>
+              <span className="inline-flex h-6 w-6 items-center justify-center rounded-sm bg-primary text-primary-foreground">
+                δ
+              </span>
               <span>deltasync</span>
             </Link>
             <nav className="flex items-center gap-1 text-sm">
               {[
                 { to: "/dashboard", label: "Dashboard" },
-                { to: "/files",     label: "Files"     },
-                { to: "/jobs",      label: "Jobs"      },
-                { to: "/keys",      label: "API Keys"  },
+                { to: "/files", label: "Files" },
+                { to: "/jobs", label: "Jobs" },
+                { to: "/keys", label: "API Keys" },
               ].map(({ to, label }) => (
                 <Link
-                  key={to} to={to}
+                  key={to}
+                  to={to}
                   className="rounded-md px-3 py-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
                   activeProps={{ className: "rounded-md px-3 py-1.5 bg-secondary text-foreground" }}
                 >
@@ -46,7 +49,9 @@ function AuthLayout() {
             </nav>
           </div>
           <div className="flex items-center gap-3">
-            <span className="font-mono text-xs text-muted-foreground hidden sm:block">{user.email}</span>
+            <span className="font-mono text-xs text-muted-foreground hidden sm:block">
+              {user.email}
+            </span>
             <button
               onClick={handleSignOut}
               className="rounded-md border border-border px-3 py-1.5 font-mono text-xs text-muted-foreground transition hover:bg-secondary hover:text-foreground"

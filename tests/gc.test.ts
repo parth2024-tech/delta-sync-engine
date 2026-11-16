@@ -73,17 +73,26 @@ async function buildReferenceSetFromDb(db: ReturnType<typeof drizzle>) {
   let lastId = "";
   const PAGE_SIZE = 80;
   for (;;) {
-    const rows = lastId === ""
-      ? await db.select({ id: schema.fileVersions.id, chunkManifest: schema.fileVersions.chunkManifest })
-          .from(schema.fileVersions)
-          .where(isNotNull(schema.fileVersions.chunkManifest))
-          .orderBy(asc(schema.fileVersions.id))
-          .limit(PAGE_SIZE)
-      : await db.select({ id: schema.fileVersions.id, chunkManifest: schema.fileVersions.chunkManifest })
-          .from(schema.fileVersions)
-          .where(gt(schema.fileVersions.id, lastId))
-          .orderBy(asc(schema.fileVersions.id))
-          .limit(PAGE_SIZE);
+    const rows =
+      lastId === ""
+        ? await db
+            .select({
+              id: schema.fileVersions.id,
+              chunkManifest: schema.fileVersions.chunkManifest,
+            })
+            .from(schema.fileVersions)
+            .where(isNotNull(schema.fileVersions.chunkManifest))
+            .orderBy(asc(schema.fileVersions.id))
+            .limit(PAGE_SIZE)
+        : await db
+            .select({
+              id: schema.fileVersions.id,
+              chunkManifest: schema.fileVersions.chunkManifest,
+            })
+            .from(schema.fileVersions)
+            .where(gt(schema.fileVersions.id, lastId))
+            .orderBy(asc(schema.fileVersions.id))
+            .limit(PAGE_SIZE);
 
     if (rows.length === 0) break;
     for (const row of rows) {
@@ -114,21 +123,25 @@ describe("GC Reference Set Builder", () => {
     db = testDb.db;
 
     // Seed user and file
-    db.insert(schema.users).values({
-      id: "user-1",
-      email: "test@test.com",
-      passwordHash: "hash",
-      displayName: "Test",
-      createdAt: new Date(),
-    }).run();
+    db.insert(schema.users)
+      .values({
+        id: "user-1",
+        email: "test@test.com",
+        passwordHash: "hash",
+        displayName: "Test",
+        createdAt: new Date(),
+      })
+      .run();
 
-    db.insert(schema.files).values({
-      id: "file-1",
-      userId: "user-1",
-      path: "test.bin",
-      totalSize: 0,
-      createdAt: new Date(),
-    }).run();
+    db.insert(schema.files)
+      .values({
+        id: "file-1",
+        userId: "user-1",
+        path: "test.bin",
+        totalSize: 0,
+        createdAt: new Date(),
+      })
+      .run();
   });
 
   it("collects hashes from chunk manifests", async () => {
@@ -139,14 +152,16 @@ describe("GC Reference Set Builder", () => {
       { offset: 4096, length: 4096, weakHash: 2, strongHashHex: hash2 },
     ]);
 
-    db.insert(schema.fileVersions).values({
-      id: "ver-1",
-      fileId: "file-1",
-      versionNo: 1,
-      size: 8192,
-      chunkManifest: manifest,
-      createdAt: new Date(),
-    }).run();
+    db.insert(schema.fileVersions)
+      .values({
+        id: "ver-1",
+        fileId: "file-1",
+        versionNo: 1,
+        size: 8192,
+        chunkManifest: manifest,
+        createdAt: new Date(),
+      })
+      .run();
 
     const hashSet = await buildReferenceSetFromDb(db);
     expect(hashSet.has(hash1)).toBe(true);
@@ -157,21 +172,25 @@ describe("GC Reference Set Builder", () => {
   it("collects hashes from legacy blocks table", async () => {
     const hash = "c".repeat(64);
 
-    db.insert(schema.fileVersions).values({
-      id: "ver-1",
-      fileId: "file-1",
-      versionNo: 1,
-      size: 4096,
-      createdAt: new Date(),
-    }).run();
+    db.insert(schema.fileVersions)
+      .values({
+        id: "ver-1",
+        fileId: "file-1",
+        versionNo: 1,
+        size: 4096,
+        createdAt: new Date(),
+      })
+      .run();
 
-    db.insert(schema.blocks).values({
-      id: "block-1",
-      versionId: "ver-1",
-      blockIndex: 0,
-      weakHash: 12345,
-      strongHash: hash,
-    }).run();
+    db.insert(schema.blocks)
+      .values({
+        id: "block-1",
+        versionId: "ver-1",
+        blockIndex: 0,
+        weakHash: 12345,
+        strongHash: hash,
+      })
+      .run();
 
     const hashSet = await buildReferenceSetFromDb(db);
     expect(hashSet.has(hash)).toBe(true);
@@ -184,17 +203,21 @@ describe("GC Reference Set Builder", () => {
     for (let i = 1; i <= 3; i++) {
       const manifest = encodeChunkManifestV1([
         { offset: 0, length: 4096, weakHash: 1, strongHashHex: sharedHash },
-        ...(i === 2 ? [{ offset: 4096, length: 4096, weakHash: 2, strongHashHex: uniqueHash }] : []),
+        ...(i === 2
+          ? [{ offset: 4096, length: 4096, weakHash: 2, strongHashHex: uniqueHash }]
+          : []),
       ]);
 
-      db.insert(schema.fileVersions).values({
-        id: `ver-${i}`,
-        fileId: "file-1",
-        versionNo: i,
-        size: 4096,
-        chunkManifest: manifest,
-        createdAt: new Date(),
-      }).run();
+      db.insert(schema.fileVersions)
+        .values({
+          id: `ver-${i}`,
+          fileId: "file-1",
+          versionNo: i,
+          size: 4096,
+          chunkManifest: manifest,
+          createdAt: new Date(),
+        })
+        .run();
     }
 
     const hashSet = await buildReferenceSetFromDb(db);
@@ -205,28 +228,32 @@ describe("GC Reference Set Builder", () => {
 
   it("does not crash on corrupted manifests", async () => {
     // Insert a version with garbage manifest data
-    db.insert(schema.fileVersions).values({
-      id: "ver-corrupt",
-      fileId: "file-1",
-      versionNo: 1,
-      size: 100,
-      chunkManifest: Buffer.from("this is not a valid manifest"),
-      createdAt: new Date(),
-    }).run();
+    db.insert(schema.fileVersions)
+      .values({
+        id: "ver-corrupt",
+        fileId: "file-1",
+        versionNo: 1,
+        size: 100,
+        chunkManifest: Buffer.from("this is not a valid manifest"),
+        createdAt: new Date(),
+      })
+      .run();
 
     // Insert a valid version
     const validHash = "f".repeat(64);
     const validManifest = encodeChunkManifestV1([
       { offset: 0, length: 1024, weakHash: 1, strongHashHex: validHash },
     ]);
-    db.insert(schema.fileVersions).values({
-      id: "ver-valid",
-      fileId: "file-1",
-      versionNo: 2,
-      size: 1024,
-      chunkManifest: validManifest,
-      createdAt: new Date(),
-    }).run();
+    db.insert(schema.fileVersions)
+      .values({
+        id: "ver-valid",
+        fileId: "file-1",
+        versionNo: 2,
+        size: 1024,
+        chunkManifest: validManifest,
+        createdAt: new Date(),
+      })
+      .run();
 
     // Should not throw, and should still collect the valid hash
     const hashSet = await buildReferenceSetFromDb(db);
@@ -239,11 +266,7 @@ describe("GC Reference Set Builder", () => {
   });
 
   it("contains exactly the expected hashes and no others", async () => {
-    const expectedHashes = new Set([
-      "1".repeat(64),
-      "2".repeat(64),
-      "3".repeat(64),
-    ]);
+    const expectedHashes = new Set(["1".repeat(64), "2".repeat(64), "3".repeat(64)]);
 
     const manifest = encodeChunkManifestV1(
       [...expectedHashes].map((hash, i) => ({
@@ -254,14 +277,16 @@ describe("GC Reference Set Builder", () => {
       })),
     );
 
-    db.insert(schema.fileVersions).values({
-      id: "ver-1",
-      fileId: "file-1",
-      versionNo: 1,
-      size: 12288,
-      chunkManifest: manifest,
-      createdAt: new Date(),
-    }).run();
+    db.insert(schema.fileVersions)
+      .values({
+        id: "ver-1",
+        fileId: "file-1",
+        versionNo: 1,
+        size: 12288,
+        chunkManifest: manifest,
+        createdAt: new Date(),
+      })
+      .run();
 
     const hashSet = await buildReferenceSetFromDb(db);
 

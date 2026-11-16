@@ -47,7 +47,7 @@
   /* Deep slate base, electric cyan accent, amber for "new" / literal data */
   --background: oklch(0.16 0.02 240);
   --foreground: oklch(0.95 0.01 240);
-  --card: oklch(0.20 0.025 240);
+  --card: oklch(0.2 0.025 240);
   --card-foreground: oklch(0.95 0.01 240);
   --popover: oklch(0.18 0.022 240);
   --popover-foreground: oklch(0.95 0.01 240);
@@ -61,7 +61,7 @@
   --muted: oklch(0.24 0.025 240);
   --muted-foreground: oklch(0.65 0.02 240);
 
-  --accent: oklch(0.30 0.04 220);
+  --accent: oklch(0.3 0.04 220);
   --accent-foreground: oklch(0.95 0.01 240);
 
   --destructive: oklch(0.65 0.22 25);
@@ -71,8 +71,8 @@
   --input: oklch(0.26 0.025 240);
   --ring: oklch(0.82 0.16 195);
 
-  --reuse: oklch(0.78 0.18 155);    /* mint green = reused block */
-  --literal: oklch(0.78 0.16 60);   /* amber = new bytes */
+  --reuse: oklch(0.78 0.18 155); /* mint green = reused block */
+  --literal: oklch(0.78 0.16 60); /* amber = new bytes */
   --grid-line: oklch(0.28 0.02 240 / 0.6);
 
   --sidebar: oklch(0.18 0.022 240);
@@ -94,14 +94,17 @@
     border-color: var(--color-border);
   }
 
-  html, body {
+  html,
+  body {
     background-color: var(--color-background);
     color: var(--color-foreground);
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
   }
 
-  code, pre, .font-mono {
+  code,
+  pre,
+  .font-mono {
     font-family: var(--font-mono);
   }
 
@@ -114,22 +117,36 @@
   }
 
   .bg-radial-fade {
-    background:
-      radial-gradient(ellipse at top,
-        color-mix(in oklab, var(--primary) 12%, transparent),
-        transparent 60%);
+    background: radial-gradient(
+      ellipse at top,
+      color-mix(in oklab, var(--primary) 12%, transparent),
+      transparent 60%
+    );
   }
 }
 
 @keyframes pulse-glow {
-  0%, 100% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--primary) 40%, transparent); }
-  50% { box-shadow: 0 0 0 6px color-mix(in oklab, var(--primary) 0%, transparent); }
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in oklab, var(--primary) 40%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 6px color-mix(in oklab, var(--primary) 0%, transparent);
+  }
 }
 
-.animate-pulse-glow { animation: pulse-glow 2s ease-out infinite; }
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-out infinite;
+}
 
 @keyframes window-slide {
-  0% { transform: translateX(0); }
-  100% { transform: translateX(calc(100% - 4rem)); }
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(calc(100% - 4rem));
+  }
 }
-.animate-window-slide { animation: window-slide 4s ease-in-out infinite alternate; }
+.animate-window-slide {
+  animation: window-slide 4s ease-in-out infinite alternate;
+}

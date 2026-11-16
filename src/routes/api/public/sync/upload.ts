@@ -1,6 +1,6 @@
 /**
  * Multipart upload: meta JSON + optional binary ops (`opsBin` / `opsFlatbuf`) + raw literal bytes.
- * 
+ *
  * Supports three operation encodings:
  *   - "json"    — JSON array (legacy, bandwidth-heavy)
  *   - "bin"     — DSO1 custom binary format
@@ -26,8 +26,9 @@ import { pruneFileVersions } from "../../../../../server/version-pruner";
 import { max, eq, and, sql } from "drizzle-orm";
 import { z } from "zod";
 
-import { PassThrough } from "node:stream";
+import { PassThrough, Readable } from "node:stream";
 import crypto from "node:crypto";
+import zlib from "node:zlib";
 import { Upload } from "@aws-sdk/lib-storage";
 import {
   S3Client,
@@ -36,25 +37,40 @@ import {
   HeadObjectCommand,
 } from "@aws-sdk/client-s3";
 
-const metaSchema = z.object({
-  path:          z.string().min(1).max(1024).refine(p => !p.startsWith('/') && !p.includes('../') && !p.includes('./'), "Invalid logical path traversal"),
-  chunking:      z.enum(["cdc", "fixed"]).optional().default("cdc"),
-  blockSize:     z.number().int().min(256).max(1048576),
-  newSize:       z.number().int().min(0),
-  contentSha256: z.string().length(64),
-  opsEncoding:   z.enum(["json", "bin", "flatbuf"]).optional().default("json"),
-  /** Required when opsEncoding is `bin` (must match decoded `opsBin` length). */
-  opCount:       z.number().int().min(0).optional(),
-  ops:           z.array(opSchema).optional(),
-}).superRefine((m, ctx) => {
-  if (m.opsEncoding === "bin" || m.opsEncoding === "flatbuf") {
-    if (m.opCount === undefined) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "opCount required when opsEncoding is bin/flatbuf" });
+const metaSchema = z
+  .object({
+    path: z
+      .string()
+      .min(1)
+      .max(1024)
+      .refine(
+        (p) => !p.startsWith("/") && !p.includes("../") && !p.includes("./"),
+        "Invalid logical path traversal",
+      ),
+    chunking: z.enum(["cdc", "fixed"]).optional().default("cdc"),
+    blockSize: z.number().int().min(256).max(1048576),
+    newSize: z.number().int().min(0),
+    contentSha256: z.string().length(64),
+    opsEncoding: z.enum(["json", "bin", "flatbuf"]).optional().default("json"),
+    /** Required when opsEncoding is `bin` (must match decoded `opsBin` length). */
+    opCount: z.number().int().min(0).optional(),
+    ops: z.array(opSchema).optional(),
+  })
+  .superRefine((m, ctx) => {
+    if (m.opsEncoding === "bin" || m.opsEncoding === "flatbuf") {
+      if (m.opCount === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "opCount required when opsEncoding is bin/flatbuf",
+        });
+      }
+    } else if (!m.ops || (m.ops.length === 0 && m.newSize > 0)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "ops array required when opsEncoding is json",
+      });
     }
-  } else if (!m.ops || (m.ops.length === 0 && m.newSize > 0)) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "ops array required when opsEncoding is json" });
-  }
-});
+  });
 
 const s3 = new S3Client({
   region: process.env.S3_REGION || "auto",
@@ -76,15 +92,14 @@ import { outboxNotifier } from "../../../../../server/outbox-notifier";
 
 async function blockExists(key: string): Promise<boolean> {
   try {
-    await s3Limited(() =>
-      s3.send(new HeadObjectCommand({ Bucket: BUCKET_NAME, Key: key })),
-    );
+    await s3Limited(() => s3.send(new HeadObjectCommand({ Bucket: BUCKET_NAME, Key: key })));
     return true;
   } catch (e: unknown) {
     const name = (e as { name?: string })?.name;
     const code = (e as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode;
     const s3code = (e as { Code?: string })?.Code;
-    if (name === "NotFound" || code === 404 || s3code === "404" || s3code === "NoSuchKey") return false;
+    if (name === "NotFound" || code === 404 || s3code === "404" || s3code === "NoSuchKey")
+      return false;
     throw e;
   }
 }
@@ -106,26 +121,38 @@ export const Route = createFileRoute("/api/public/sync/upload")({
         }
 
         let formData: FormData;
-        try { formData = await request.formData(); }
-        catch { return json({ error: "Expected multipart/form-data" }, 400); }
+        try {
+          formData = await request.formData();
+        } catch {
+          return json({ error: "Expected multipart/form-data" }, 400);
+        }
 
         const metaStr = formData.get("meta");
         if (typeof metaStr !== "string") return json({ error: "Missing 'meta' field" }, 400);
 
         let meta: z.infer<typeof metaSchema>;
-        try { meta = metaSchema.parse(JSON.parse(metaStr)); }
-        catch (e) { return json({ error: "Invalid meta: " + String(e) }, 400); }
+        try {
+          meta = metaSchema.parse(JSON.parse(metaStr));
+        } catch (e) {
+          return json({ error: "Invalid meta: " + String(e) }, 400);
+        }
 
         let ops: UploadOp[];
         if (meta.opsEncoding === "bin" || meta.opsEncoding === "flatbuf") {
           const fieldName = meta.opsEncoding === "flatbuf" ? "opsFlatbuf" : "opsBin";
           const opsEntry = formData.get(fieldName) ?? formData.get("opsBin");
           if (!(opsEntry instanceof Blob)) {
-            return json({ error: `Missing ${fieldName} field when opsEncoding is ${meta.opsEncoding}` }, 400);
+            return json(
+              { error: `Missing ${fieldName} field when opsEncoding is ${meta.opsEncoding}` },
+              400,
+            );
           }
           let buf: Buffer;
-          try { buf = Buffer.from(await opsEntry.arrayBuffer()); }
-          catch { return json({ error: "Invalid ops buffer" }, 400); }
+          try {
+            buf = Buffer.from(await opsEntry.arrayBuffer());
+          } catch {
+            return json({ error: "Invalid ops buffer" }, 400);
+          }
           try {
             const decoded = decodeOpsUniversal(buf);
             ops = decoded.ops;
@@ -133,25 +160,33 @@ export const Route = createFileRoute("/api/public/sync/upload")({
             return json({ error: "Invalid ops binary: " + String(e) }, 400);
           }
           if (ops.length !== meta.opCount) {
-            return json({ error: `opCount ${meta.opCount} does not match decoded ops (${ops.length})` }, 400);
+            return json(
+              { error: `opCount ${meta.opCount} does not match decoded ops (${ops.length})` },
+              400,
+            );
           }
         } else {
           ops = meta.ops!;
         }
 
         const literalsEntry = formData.get("literals");
+        const literalsEncoding = formData.get("literalsEncoding") as string | null;
         if (literalsEntry && !(literalsEntry instanceof Blob)) {
           return json({ error: "Invalid literals" }, 400);
         }
 
-        const [existingFile] = await db.select().from(files)
+        const [existingFile] = await db
+          .select()
+          .from(files)
           .where(and(eq(files.userId, userId), eq(files.path, meta.path)));
 
         const snapshotCurrentVersionId = existingFile?.currentVersionId ?? null;
 
         const prevChunks = await (async () => {
           if (!existingFile?.currentVersionId) return [];
-          const [ver] = await db.select().from(fileVersions)
+          const [ver] = await db
+            .select()
+            .from(fileVersions)
             .where(eq(fileVersions.id, existingFile.currentVersionId));
           if (!ver) return [];
           return loadVersionChunks(db, existingFile.currentVersionId, ver);
@@ -165,23 +200,37 @@ export const Route = createFileRoute("/api/public/sync/upload")({
           }
         }
 
-        type ManifestRow = { offset: number; length: number; weakHash: number; strongHashHex: string };
+        type ManifestRow = {
+          offset: number;
+          length: number;
+          weakHash: number;
+          strongHashHex: string;
+        };
         const manifestRows: ManifestRow[] = [];
         let bytesTransferred = 0;
         let runningOffset = 0;
 
         if (literalsEntry instanceof Blob) {
-          const stream = literalsEntry.stream();
+          let stream: ReadableStream<Uint8Array>;
+          if (literalsEncoding === "gzip") {
+            const webStream = literalsEntry.stream() as unknown as Parameters<
+              typeof Readable.fromWeb
+            >[0];
+            const nodeStream = Readable.fromWeb(webStream).pipe(zlib.createGunzip());
+            stream = Readable.toWeb(nodeStream) as ReadableStream<Uint8Array>;
+          } else {
+            stream = literalsEntry.stream();
+          }
           const reader = stream.getReader();
-          let currentChunk = new Uint8Array(0);
+          let currentChunk: Uint8Array<ArrayBufferLike> = new Uint8Array(0);
 
           for (const op of ops) {
             if (op.type === "copy") {
               const pc = prevByIndex.get(op.blockIndex)!;
               manifestRows.push({
-                offset:        runningOffset,
-                length:        pc.length,
-                weakHash:      pc.weakHash,
+                offset: runningOffset,
+                length: pc.length,
+                weakHash: pc.weakHash,
                 strongHashHex: pc.strongHashHex,
               });
               runningOffset += pc.length;
@@ -230,22 +279,26 @@ export const Route = createFileRoute("/api/public/sync/upload")({
               const exists = await blockExists(strongHash);
               if (!exists) {
                 await s3Limited(() =>
-                  s3.send(new CopyObjectCommand({
-                    Bucket:     BUCKET_NAME,
-                    CopySource: `${BUCKET_NAME}/${tempKey}`,
-                    Key:        strongHash,
-                  })),
+                  s3.send(
+                    new CopyObjectCommand({
+                      Bucket: BUCKET_NAME,
+                      CopySource: `${BUCKET_NAME}/${tempKey}`,
+                      Key: strongHash,
+                    }),
+                  ),
                 );
               }
               await s3Limited(() =>
-                s3.send(new DeleteObjectCommand({
-                  Bucket: BUCKET_NAME,
-                  Key:    tempKey,
-                })),
+                s3.send(
+                  new DeleteObjectCommand({
+                    Bucket: BUCKET_NAME,
+                    Key: tempKey,
+                  }),
+                ),
               );
 
               manifestRows.push({
-                offset:        runningOffset,
+                offset: runningOffset,
                 length,
                 weakHash,
                 strongHashHex: strongHash,
@@ -258,9 +311,9 @@ export const Route = createFileRoute("/api/public/sync/upload")({
             if (op.type === "copy") {
               const pc = prevByIndex.get(op.blockIndex)!;
               manifestRows.push({
-                offset:        runningOffset,
-                length:        pc.length,
-                weakHash:      pc.weakHash,
+                offset: runningOffset,
+                length: pc.length,
+                weakHash: pc.weakHash,
                 strongHashHex: pc.strongHashHex,
               });
               runningOffset += pc.length;
@@ -269,7 +322,10 @@ export const Route = createFileRoute("/api/public/sync/upload")({
         }
 
         if (runningOffset !== meta.newSize) {
-          return json({ error: `Reconstructed size ${runningOffset} does not match newSize ${meta.newSize}` }, 400);
+          return json(
+            { error: `Reconstructed size ${runningOffset} does not match newSize ${meta.newSize}` },
+            400,
+          );
         }
 
         const bytesSaved = Math.max(0, meta.newSize - bytesTransferred);
@@ -280,7 +336,9 @@ export const Route = createFileRoute("/api/public/sync/upload")({
           await db.transaction(async (tx) => {
             // SQLite transactions are naturally serialized for writes, so no advisory lock needed.
 
-            const [ef] = await tx.select().from(files)
+            const [ef] = await tx
+              .select()
+              .from(files)
               .where(and(eq(files.userId, userId), eq(files.path, meta.path)));
 
             if ((ef?.currentVersionId ?? null) !== snapshotCurrentVersionId) {
@@ -291,7 +349,8 @@ export const Route = createFileRoute("/api/public/sync/upload")({
             if (ef) {
               fileId = ef.id;
             } else {
-              const [f] = await tx.insert(files)
+              const [f] = await tx
+                .insert(files)
                 .values({ userId, path: meta.path, totalSize: meta.newSize })
                 .returning();
               fileId = f.id;
@@ -305,25 +364,33 @@ export const Route = createFileRoute("/api/public/sync/upload")({
 
             const packed = encodeChunkManifestV1(manifestRows);
 
-            const [version] = await tx.insert(fileVersions).values({
-              fileId,
-              versionNo:     nextVer,
-              size:          meta.newSize,
-              totalBlocks:   manifestRows.length,
-              blockSize:     meta.blockSize,
-              chunkManifest: packed,
-              chunkingMode:  meta.chunking,
-              contentSha256: meta.contentSha256,
-              verificationStatus: "pending",
-            }).returning();
+            const [version] = await tx
+              .insert(fileVersions)
+              .values({
+                fileId,
+                versionNo: nextVer,
+                size: meta.newSize,
+                totalBlocks: manifestRows.length,
+                blockSize: meta.blockSize,
+                chunkManifest: packed,
+                chunkingMode: meta.chunking,
+                contentSha256: meta.contentSha256,
+                verificationStatus: "pending",
+              })
+              .returning();
 
-            await tx.update(files)
+            await tx
+              .update(files)
               .set({ currentVersionId: version.id, totalSize: meta.newSize })
               .where(eq(files.id, fileId));
 
             await tx.insert(syncJobs).values({
-              userId, fileId, direction: "push",
-              bytesTransferred, bytesSaved, status: "done",
+              userId,
+              fileId,
+              direction: "push",
+              bytesTransferred,
+              bytesSaved,
+              status: "done",
               finishedAt: new Date(),
             });
 
@@ -332,8 +399,13 @@ export const Route = createFileRoute("/api/public/sync/upload")({
               eventType: "FILE_VERSION_CREATED",
               aggregateId: version.id,
               payload: JSON.stringify({
-                userId, fileId, versionId: version.id, versionNo: nextVer,
-                path: meta.path, size: meta.newSize, totalBlocks: manifestRows.length,
+                userId,
+                fileId,
+                versionId: version.id,
+                versionNo: nextVer,
+                path: meta.path,
+                size: meta.newSize,
+                totalBlocks: manifestRows.length,
                 contentSha256: meta.contentSha256,
               }),
             });
@@ -342,9 +414,15 @@ export const Route = createFileRoute("/api/public/sync/upload")({
           });
         } catch (err: unknown) {
           if (err && typeof err === "object" && (err as { code?: string }).code === "STALE") {
-            return json({ error: "Remote file changed during upload. Pull latest signatures and retry." }, 409);
+            return json(
+              { error: "Remote file changed during upload. Pull latest signatures and retry." },
+              409,
+            );
           }
-          if ((err as { code?: string })?.code === "23505" || String((err as Error).message).includes("unique constraint")) {
+          if (
+            (err as { code?: string })?.code === "23505" ||
+            String((err as Error).message).includes("unique constraint")
+          ) {
             return json({ error: "Concurrent sync conflict. Please pull and retry." }, 409);
           }
           throw err;
@@ -355,7 +433,9 @@ export const Route = createFileRoute("/api/public/sync/upload")({
 
         // Fire version pruner asynchronously (non-blocking)
         if (returnVal.versionNo > 0) {
-          const [committedFile] = await db.select({ id: files.id }).from(files)
+          const [committedFile] = await db
+            .select({ id: files.id })
+            .from(files)
             .where(and(eq(files.userId, userId), eq(files.path, meta.path)));
           if (committedFile) {
             void pruneFileVersions(committedFile.id).catch((err) =>

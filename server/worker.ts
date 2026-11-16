@@ -15,11 +15,7 @@ import { iterateManifestHashPages } from "../shared/chunk-manifest";
 import { eq } from "drizzle-orm";
 import { getS3Key } from "../shared/hash";
 import { outboxNotifier } from "./outbox-notifier";
-import {
-  S3Client,
-  HeadObjectCommand,
-  DeleteObjectsCommand,
-} from "@aws-sdk/client-s3";
+import { S3Client, HeadObjectCommand, DeleteObjectsCommand } from "@aws-sdk/client-s3";
 
 const s3 = new S3Client({
   region: process.env.S3_REGION || "auto",
@@ -44,8 +40,7 @@ export async function handleVerifyChunks(versionId: string) {
     return;
   }
 
-  const [version] = await db.select().from(fileVersions)
-    .where(eq(fileVersions.id, versionId));
+  const [version] = await db.select().from(fileVersions).where(eq(fileVersions.id, versionId));
 
   if (!version || !version.chunkManifest) {
     console.warn(`[Worker:verify-chunks] Version ${versionId} not found or has no manifest`);
@@ -82,7 +77,8 @@ export async function handleVerifyChunks(versionId: string) {
 
   if (missingHashes.length > 0) {
     // Mark as corrupted
-    await db.update(fileVersions)
+    await db
+      .update(fileVersions)
       .set({ verificationStatus: "corrupted" })
       .where(eq(fileVersions.id, versionId));
 
@@ -106,7 +102,8 @@ export async function handleVerifyChunks(versionId: string) {
     );
   } else {
     // Mark as verified
-    await db.update(fileVersions)
+    await db
+      .update(fileVersions)
       .set({ verificationStatus: "verified" })
       .where(eq(fileVersions.id, versionId));
 
@@ -143,13 +140,15 @@ export async function handleCleanupFile(payload: { fileId: string; chunkHashes?:
   for (let i = 0; i < chunkHashes.length; i += DELETE_BATCH) {
     const batch = chunkHashes.slice(i, i + DELETE_BATCH);
     try {
-      await s3.send(new DeleteObjectsCommand({
-        Bucket: BUCKET_NAME,
-        Delete: {
-          Objects: batch.map((hash) => ({ Key: getS3Key(hash) })),
-          Quiet: true,
-        },
-      }));
+      await s3.send(
+        new DeleteObjectsCommand({
+          Bucket: BUCKET_NAME,
+          Delete: {
+            Objects: batch.map((hash) => ({ Key: getS3Key(hash) })),
+            Quiet: true,
+          },
+        }),
+      );
       totalDeleted += batch.length;
     } catch (err) {
       console.error(`[Worker:cleanup-file] S3 batch delete failed:`, err);

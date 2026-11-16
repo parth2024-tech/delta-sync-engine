@@ -95,10 +95,14 @@ export function decodeChunkManifestV1Streaming(
   if (u.length < 8 + count * row) throw new Error("Truncated chunk manifest");
   let p = 8;
   for (let i = 0; i < count; i++) {
-    const offset = u.readUInt32LE(p); p += 4;
-    const length = u.readUInt32LE(p); p += 4;
-    const weakHash = u.readUInt32LE(p); p += 4;
-    const strongHex = hex32(u, p); p += 32;
+    const offset = u.readUInt32LE(p);
+    p += 4;
+    const length = u.readUInt32LE(p);
+    p += 4;
+    const weakHash = u.readUInt32LE(p);
+    p += 4;
+    const strongHex = hex32(u, p);
+    p += 32;
     callback({ blockIndex: i, offset, length, weakHash, strongHashHex: strongHex });
   }
   return count;

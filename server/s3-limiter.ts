@@ -6,7 +6,11 @@ type Task<T> = () => Promise<T>;
 
 export function createS3Limiter(maxConcurrent: number) {
   let active = 0;
-  const queue: { run: Task<unknown>; resolve: (v: unknown) => void; reject: (e: unknown) => void }[] = [];
+  const queue: {
+    run: Task<unknown>;
+    resolve: (v: unknown) => void;
+    reject: (e: unknown) => void;
+  }[] = [];
 
   function pump() {
     while (active < maxConcurrent && queue.length > 0) {
@@ -14,7 +18,10 @@ export function createS3Limiter(maxConcurrent: number) {
       active++;
       job
         .run()
-        .then((v) => job.resolve(v), (e) => job.reject(e))
+        .then(
+          (v) => job.resolve(v),
+          (e) => job.reject(e),
+        )
         .finally(() => {
           active--;
           pump();

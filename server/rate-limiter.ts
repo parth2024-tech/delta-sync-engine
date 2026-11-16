@@ -18,7 +18,8 @@ const byteLimits = new Map<string, { bytes: number; expiresAt: number }>();
 
 const MAX_UPLOAD_RPM = Math.max(1, parseInt(process.env.RATE_LIMIT_UPLOAD || "60", 10) || 60);
 const MAX_DOWNLOAD_RPM = Math.max(1, parseInt(process.env.RATE_LIMIT_DOWNLOAD || "30", 10) || 30);
-const MAX_BYTE_QUOTA = Math.max(1, parseInt(process.env.BYTE_QUOTA_MB || "500", 10) || 500) * 1024 * 1024;
+const MAX_BYTE_QUOTA =
+  Math.max(1, parseInt(process.env.BYTE_QUOTA_MB || "500", 10) || 500) * 1024 * 1024;
 
 const WINDOW_MS = 60_000; // 60-second sliding window
 

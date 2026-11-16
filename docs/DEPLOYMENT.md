@@ -68,6 +68,7 @@ docker-compose logs -f api
 ```
 
 **Services:**
+
 - API: http://localhost:5000
 - MinIO Console: http://localhost:9001
 - PostgreSQL: localhost:5432
@@ -129,7 +130,7 @@ docker run \
 
 ```yaml
 # docker-compose.prod.yml
-version: '3.8'
+version: "3.8"
 
 services:
   api:
@@ -225,33 +226,33 @@ spec:
         app: postgres
     spec:
       containers:
-      - name: postgres
-        image: postgres:16-alpine
-        env:
-        - name: POSTGRES_USER
-          value: deltasync
-        - name: POSTGRES_DB
-          value: deltasync
-        - name: POSTGRES_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: deltasync-secrets
-              key: db-password
-        ports:
-        - containerPort: 5432
-        volumeMounts:
-        - name: data
-          mountPath: /var/lib/postgresql/data
-        resources:
-          requests:
-            memory: "256Mi"
-            cpu: "250m"
-          limits:
-            memory: "1Gi"
-            cpu: "1000m"
+        - name: postgres
+          image: postgres:16-alpine
+          env:
+            - name: POSTGRES_USER
+              value: deltasync
+            - name: POSTGRES_DB
+              value: deltasync
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: deltasync-secrets
+                  key: db-password
+          ports:
+            - containerPort: 5432
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
       volumes:
-      - name: data
-        emptyDir: {}  # Or use PersistentVolumeClaim for production
+        - name: data
+          emptyDir: {} # Or use PersistentVolumeClaim for production
 ```
 
 ### 4. Deploy API
@@ -264,7 +265,7 @@ metadata:
   name: deltasync-api
   namespace: deltasync
 spec:
-  replicas: 3  # Scale horizontally
+  replicas: 3 # Scale horizontally
   selector:
     matchLabels:
       app: deltasync-api
@@ -278,76 +279,76 @@ spec:
         runAsUser: 1000
         fsReadOnlyRootFilesystem: true
       containers:
-      - name: api
-        image: deltasync:latest
-        ports:
-        - containerPort: 5000
-        env:
-        - name: JWT_SECRET
-          valueFrom:
-            secretKeyRef:
-              name: deltasync-secrets
-              key: jwt-secret
-        - name: S3_REGION
-          value: "us-east-1"
-        - name: S3_ENDPOINT
-          value: "https://s3.amazonaws.com"
-        - name: S3_ACCESS_KEY_ID
-          valueFrom:
-            secretKeyRef:
-              name: deltasync-secrets
-              key: s3-access-key-id
-        - name: S3_SECRET_ACCESS_KEY
-          valueFrom:
-            secretKeyRef:
-              name: deltasync-secrets
-              key: s3-secret-access-key
-        - name: S3_BUCKET_NAME
-          value: "company-deltasync-prod"
-        - name: DATABASE_URL
-          value: "postgresql://deltasync:$(POSTGRES_PASSWORD)@postgres:5432/deltasync"
-        - name: POSTGRES_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: deltasync-secrets
-              key: db-password
-        - name: NODE_ENV
-          value: "production"
-        - name: DB_BACKEND
-          value: "postgres"
-        - name: LOG_LEVEL
-          value: "info"
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 5000
-          initialDelaySeconds: 30
-          periodSeconds: 10
-        readinessProbe:
-          httpGet:
-            path: /ready
-            port: 5000
-          initialDelaySeconds: 5
-          periodSeconds: 5
-        resources:
-          requests:
-            memory: "512Mi"
-            cpu: "500m"
-          limits:
-            memory: "2Gi"
-            cpu: "2000m"
-        securityContext:
-          allowPrivilegeEscalation: false
-          readOnlyRootFilesystem: true
-          capabilities:
-            drop:
-            - ALL
-        volumeMounts:
-        - name: tmp
-          mountPath: /tmp
+        - name: api
+          image: deltasync:latest
+          ports:
+            - containerPort: 5000
+          env:
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: deltasync-secrets
+                  key: jwt-secret
+            - name: S3_REGION
+              value: "us-east-1"
+            - name: S3_ENDPOINT
+              value: "https://s3.amazonaws.com"
+            - name: S3_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: deltasync-secrets
+                  key: s3-access-key-id
+            - name: S3_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: deltasync-secrets
+                  key: s3-secret-access-key
+            - name: S3_BUCKET_NAME
+              value: "company-deltasync-prod"
+            - name: DATABASE_URL
+              value: "postgresql://deltasync:$(POSTGRES_PASSWORD)@postgres:5432/deltasync"
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: deltasync-secrets
+                  key: db-password
+            - name: NODE_ENV
+              value: "production"
+            - name: DB_BACKEND
+              value: "postgres"
+            - name: LOG_LEVEL
+              value: "info"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 5000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "500m"
+            limits:
+              memory: "2Gi"
+              cpu: "2000m"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
       volumes:
-      - name: tmp
-        emptyDir: {}
+        - name: tmp
+          emptyDir: {}
 ```
 
 ### 5. Create Service
@@ -364,9 +365,9 @@ spec:
   selector:
     app: deltasync-api
   ports:
-  - protocol: TCP
-    port: 80
-    targetPort: 5000
+    - protocol: TCP
+      port: 80
+      targetPort: 5000
 ```
 
 ### Deploy
@@ -535,19 +536,12 @@ aws s3api put-bucket-encryption \
   "Statement": [
     {
       "Effect": "Allow",
-      "Action": [
-        "s3:GetObject",
-        "s3:PutObject",
-        "s3:HeadObject",
-        "s3:DeleteObject"
-      ],
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:HeadObject", "s3:DeleteObject"],
       "Resource": "arn:aws:s3:::company-deltasync-prod/*"
     },
     {
       "Effect": "Allow",
-      "Action": [
-        "s3:ListBucket"
-      ],
+      "Action": ["s3:ListBucket"],
       "Resource": "arn:aws:s3:::company-deltasync-prod"
     }
   ]
@@ -564,7 +558,7 @@ aws s3api put-bucket-encryption \
 # Liveness probe
 curl http://localhost:5000/health
 
-# Readiness probe  
+# Readiness probe
 curl http://localhost:5000/ready
 ```
 

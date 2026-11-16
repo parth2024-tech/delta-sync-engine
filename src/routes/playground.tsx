@@ -14,7 +14,11 @@ export const Route = createFileRoute("/playground")({
   head: () => ({
     meta: [
       { title: "Playground — Deltasync" },
-      { name: "description", content: "Run the rsync delta algorithm live in your browser. Compare two file versions and see exactly which blocks are reused." },
+      {
+        name: "description",
+        content:
+          "Run the rsync delta algorithm live in your browser. Compare two file versions and see exactly which blocks are reused.",
+      },
     ],
   }),
   component: Playground,
@@ -112,9 +116,9 @@ function Playground() {
         </p>
         <h1 className="mb-2 font-display text-3xl font-bold">Delta playground</h1>
         <p className="mb-8 max-w-2xl text-muted-foreground">
-          Edit the two file versions below (or upload your own). The full rsync
-          algorithm runs in your browser — Adler-32 rolling hash, SHA-256 verify,
-          delta op generation, and byte-perfect reconstruction.
+          Edit the two file versions below (or upload your own). The full rsync algorithm runs in
+          your browser — Adler-32 rolling hash, SHA-256 verify, delta op generation, and
+          byte-perfect reconstruction.
         </p>
 
         <div className="mb-6 flex flex-wrap items-end gap-4 rounded-lg border border-border bg-card/40 p-4">
@@ -143,12 +147,7 @@ function Playground() {
             {running ? "computing…" : "▸ compute delta"}
           </button>
           {verified !== null && (
-            <span
-              className={
-                "font-mono text-xs " +
-                (verified ? "text-reuse" : "text-destructive")
-              }
-            >
+            <span className={"font-mono text-xs " + (verified ? "text-reuse" : "text-destructive")}>
               {verified ? "● reconstruction verified byte-for-byte" : "● reconstruction MISMATCH"}
             </span>
           )}
@@ -171,9 +170,7 @@ function Playground() {
           />
         </div>
 
-        {result && sigs && (
-          <Results result={result} sigs={sigs} newSize={newBytes.length} />
-        )}
+        {result && sigs && <Results result={result} sigs={sigs} newSize={newBytes.length} />}
       </div>
     </div>
   );
@@ -226,9 +223,7 @@ function Results({
   const { stats, ops, blockSize } = result;
   const fullUploadBytes = newSize;
   const deltaBytes = stats.literalBytes + ops.filter((o) => o.type === "copy").length * 8; // 8B copy ref overhead
-  const savedPct = fullUploadBytes
-    ? ((1 - deltaBytes / fullUploadBytes) * 100).toFixed(2)
-    : "0";
+  const savedPct = fullUploadBytes ? ((1 - deltaBytes / fullUploadBytes) * 100).toFixed(2) : "0";
 
   return (
     <div className="mt-8 space-y-6">
@@ -257,7 +252,10 @@ function Results({
         <div className="flex flex-wrap gap-1">
           {ops.map((op, i) => {
             const isCopy = op.type === "copy";
-            const cells = Math.max(1, Math.ceil((isCopy ? op.length : op.bytes.length) / Math.max(64, blockSize / 16)));
+            const cells = Math.max(
+              1,
+              Math.ceil((isCopy ? op.length : op.bytes.length) / Math.max(64, blockSize / 16)),
+            );
             return Array.from({ length: cells }).map((_, j) => (
               <span
                 key={`${i}-${j}`}
@@ -287,11 +285,12 @@ function Results({
               <span className="w-8 text-muted-foreground">{i.toString().padStart(3, "0")}</span>
               {op.type === "copy" ? (
                 <span className="text-reuse">
-                  COPY    block=#{op.blockIndex.toString().padStart(4, "0")}  len={op.length}  → @{op.offset}
+                  COPY block=#{op.blockIndex.toString().padStart(4, "0")} len={op.length} → @
+                  {op.offset}
                 </span>
               ) : (
                 <span className="text-literal">
-                  LITERAL bytes={op.bytes.length.toString().padStart(4, " ")}                → @{op.offset}
+                  LITERAL bytes={op.bytes.length.toString().padStart(4, " ")} → @{op.offset}
                 </span>
               )}
             </div>
@@ -310,8 +309,7 @@ function Stat({ label, value, accent }: { label: string; value: string; accent?:
       </div>
       <div
         className={
-          "mt-2 font-display text-2xl font-bold " +
-          (accent ? "text-primary" : "text-foreground")
+          "mt-2 font-display text-2xl font-bold " + (accent ? "text-primary" : "text-foreground")
         }
       >
         {value}

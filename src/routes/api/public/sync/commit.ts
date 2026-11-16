@@ -29,8 +29,6 @@ const commitSchema = z.object({
   negotiationId: z.string().uuid(),
 });
 
-
-
 export const Route = createFileRoute("/api/public/sync/commit")({
   server: {
     handlers: {
@@ -57,7 +55,12 @@ export const Route = createFileRoute("/api/public/sync/commit")({
         }
 
         // Build the chunk manifest (no spot-check; full verification happens in background worker)
-        type ManifestRow = { offset: number; length: number; weakHash: number; strongHashHex: string };
+        type ManifestRow = {
+          offset: number;
+          length: number;
+          weakHash: number;
+          strongHashHex: string;
+        };
         const manifestRows: ManifestRow[] = [];
         let runningOffset = 0;
 
@@ -72,9 +75,12 @@ export const Route = createFileRoute("/api/public/sync/commit")({
         }
 
         if (runningOffset !== negotiation.newSize) {
-          return json({
-            error: `Reconstructed size ${runningOffset} does not match newSize ${negotiation.newSize}`,
-          }, 400);
+          return json(
+            {
+              error: `Reconstructed size ${runningOffset} does not match newSize ${negotiation.newSize}`,
+            },
+            400,
+          );
         }
 
         // Calculate bytes saved (chunks reused from previous version)
@@ -89,7 +95,9 @@ export const Route = createFileRoute("/api/public/sync/commit")({
             // SQLite transactions are serialized natively.
 
             // Optimistic concurrency check
-            const [ef] = await tx.select().from(files)
+            const [ef] = await tx
+              .select()
+              .from(files)
               .where(and(eq(files.userId, userId), eq(files.path, negotiation.path)));
 
             if ((ef?.currentVersionId ?? null) !== negotiation.snapshotCurrentVersionId) {
@@ -100,7 +108,8 @@ export const Route = createFileRoute("/api/public/sync/commit")({
             if (ef) {
               fileId = ef.id;
             } else {
-              const [f] = await tx.insert(files)
+              const [f] = await tx
+                .insert(files)
                 .values({ userId, path: negotiation.path, totalSize: negotiation.newSize })
                 .returning();
               fileId = f.id;
@@ -114,25 +123,33 @@ export const Route = createFileRoute("/api/public/sync/commit")({
 
             const packed = encodeChunkManifestV1(manifestRows);
 
-            const [version] = await tx.insert(fileVersions).values({
-              fileId,
-              versionNo: nextVer,
-              size: negotiation.newSize,
-              totalBlocks: manifestRows.length,
-              blockSize: negotiation.blockSize,
-              chunkManifest: packed,
-              chunkingMode: negotiation.chunking,
-              contentSha256: negotiation.contentSha256,
-              verificationStatus: "pending",
-            }).returning();
+            const [version] = await tx
+              .insert(fileVersions)
+              .values({
+                fileId,
+                versionNo: nextVer,
+                size: negotiation.newSize,
+                totalBlocks: manifestRows.length,
+                blockSize: negotiation.blockSize,
+                chunkManifest: packed,
+                chunkingMode: negotiation.chunking,
+                contentSha256: negotiation.contentSha256,
+                verificationStatus: "pending",
+              })
+              .returning();
 
-            await tx.update(files)
+            await tx
+              .update(files)
               .set({ currentVersionId: version.id, totalSize: negotiation.newSize })
               .where(eq(files.id, fileId));
 
             await tx.insert(syncJobs).values({
-              userId, fileId, direction: "push",
-              bytesTransferred, bytesSaved, status: "done",
+              userId,
+              fileId,
+              direction: "push",
+              bytesTransferred,
+              bytesSaved,
+              status: "done",
               finishedAt: new Date(),
             });
 
@@ -156,7 +173,10 @@ export const Route = createFileRoute("/api/public/sync/commit")({
           });
         } catch (err: unknown) {
           if (err && typeof err === "object" && (err as { code?: string }).code === "STALE") {
-            return json({ error: "Remote file changed during upload. Pull latest and retry." }, 409);
+            return json(
+              { error: "Remote file changed during upload. Pull latest and retry." },
+              409,
+            );
           }
           if ((err as { code?: string })?.code === "23505") {
             return json({ error: "Concurrent sync conflict. Please pull and retry." }, 409);
@@ -171,7 +191,15 @@ export const Route = createFileRoute("/api/public/sync/commit")({
         outboxNotifier.emitInserted();
 
         // Fire version pruner asynchronously (non-blocking)
-        const committedFileId = returnVal.versionNo > 0 ? (await db.select({ id: files.id }).from(files).where(and(eq(files.userId, userId), eq(files.path, negotiation.path))))[0]?.id : undefined;
+        const committedFileId =
+          returnVal.versionNo > 0
+            ? (
+                await db
+                  .select({ id: files.id })
+                  .from(files)
+                  .where(and(eq(files.userId, userId), eq(files.path, negotiation.path)))
+              )[0]?.id
+            : undefined;
         if (committedFileId) {
           void pruneFileVersions(committedFileId).catch((err) =>
             console.error("[Pruner] Error:", err),

@@ -16,8 +16,9 @@ API keys are 256-bit cryptographically secure credentials prefixed with `dks_`.
 **Storage:** Keys are stored as SHA-256 hashes in the database. Only the plaintext key is shown once during creation.
 
 **Usage:**
+
 ```bash
-curl -H "Authorization: Bearer dks_your-key-here" https://api.example.com/api/public/sync/files
+curl -H "Authorization: Bearer <YOUR_API_KEY>" https://api.example.com/api/public/sync/files
 ```
 
 ### JWT Sessions
@@ -33,6 +34,7 @@ Token algorithm: HS256 (HMAC with SHA-256)
 **Purpose:** Request a file sync negotiation before upload
 
 **Request:**
+
 ```json
 {
   "path": "documents/report.pdf",
@@ -52,6 +54,7 @@ Token algorithm: HS256 (HMAC with SHA-256)
 ```
 
 **Response:**
+
 ```json
 {
   "negotiationId": "neg_123456",
@@ -62,6 +65,7 @@ Token algorithm: HS256 (HMAC with SHA-256)
 ```
 
 **Status Codes:**
+
 - `200 OK` - Negotiation created successfully
 - `400 Bad Request` - Invalid input (missing fields, invalid hashes, etc.)
 - `401 Unauthorized` - Missing or invalid authentication
@@ -72,6 +76,7 @@ Token algorithm: HS256 (HMAC with SHA-256)
 **Purpose:** Upload file chunks using delta encoding
 
 **Request:**
+
 - Content-Type: `multipart/form-data`
 - Fields:
   - `negotiationId` - from /negotiate response
@@ -79,6 +84,7 @@ Token algorithm: HS256 (HMAC with SHA-256)
   - `delta` - binary data (literal bytes)
 
 **Metadata Example:**
+
 ```json
 {
   "ops": [
@@ -89,6 +95,7 @@ Token algorithm: HS256 (HMAC with SHA-256)
 ```
 
 **Response:**
+
 ```json
 {
   "uploadId": "upload_789",
@@ -98,6 +105,7 @@ Token algorithm: HS256 (HMAC with SHA-256)
 ```
 
 **Status Codes:**
+
 - `200 OK` - Upload received
 - `400 Bad Request` - Invalid upload format
 - `401 Unauthorized` - Invalid authentication or API key
@@ -109,6 +117,7 @@ Token algorithm: HS256 (HMAC with SHA-256)
 **Purpose:** Finalize an upload and create file version
 
 **Request:**
+
 ```json
 {
   "negotiationId": "neg_123456",
@@ -117,6 +126,7 @@ Token algorithm: HS256 (HMAC with SHA-256)
 ```
 
 **Response:**
+
 ```json
 {
   "fileId": "file_abc",
@@ -129,6 +139,7 @@ Token algorithm: HS256 (HMAC with SHA-256)
 ```
 
 **Status Codes:**
+
 - `201 Created` - Version created successfully
 - `400 Bad Request` - Invalid negotiation or path
 - `401 Unauthorized` - Invalid authentication
@@ -140,15 +151,18 @@ Token algorithm: HS256 (HMAC with SHA-256)
 **Purpose:** Download a file or specific version
 
 **Query Parameters:**
+
 - `fileId` - File ID (required)
 - `version` - Version number (optional, defaults to latest)
 - `Range` - HTTP range header for resumable downloads
 
 **Response:**
+
 - Content-Type: `application/octet-stream`
 - Body: Binary file data (streamed)
 
 **Status Codes:**
+
 - `200 OK` - Full file
 - `206 Partial Content` - Partial file (from Range header)
 - `400 Bad Request` - Missing or invalid fileId
@@ -160,11 +174,13 @@ Token algorithm: HS256 (HMAC with SHA-256)
 **Purpose:** List all user files with metadata
 
 **Query Parameters:**
+
 - `skip` - Pagination offset (default: 0)
 - `take` - Pagination limit (default: 20, max: 100)
 - `sort` - Sort field: `name`, `size`, `updated` (default: `name`)
 
 **Response:**
+
 ```json
 {
   "files": [
@@ -184,6 +200,7 @@ Token algorithm: HS256 (HMAC with SHA-256)
 ```
 
 **Status Codes:**
+
 - `200 OK` - Files listed
 - `401 Unauthorized` - Invalid authentication
 
@@ -247,6 +264,7 @@ The `/negotiate` endpoint returns pre-signed S3 URLs for direct block uploads:
 - Key: Block content hash (SHA-256)
 
 **Example:**
+
 ```bash
 curl -X PUT \
   --data-binary @block.dat \

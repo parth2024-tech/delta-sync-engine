@@ -18,17 +18,21 @@ export const Route = createFileRoute("/api/public/sync/signatures")({
         const userId = await validateApiKey(request.headers.get("Authorization"));
         if (!userId) return json({ error: "Unauthorized" }, 401);
 
-        const body = await request.json() as { path?: string };
+        const body = (await request.json()) as { path?: string };
         if (!body?.path) return json({ error: "path required" }, 400);
 
-        const [file] = await db.select().from(files)
+        const [file] = await db
+          .select()
+          .from(files)
           .where(and(eq(files.userId, userId), eq(files.path, body.path)));
 
         if (!file || !file.currentVersionId) {
           return json(null);
         }
 
-        const [version] = await db.select().from(fileVersions)
+        const [version] = await db
+          .select()
+          .from(fileVersions)
           .where(eq(fileVersions.id, file.currentVersionId));
         if (!version) return json(null);
 
@@ -36,17 +40,17 @@ export const Route = createFileRoute("/api/public/sync/signatures")({
 
         const signatures = chunks.map((s) => ({
           blockIndex: s.blockIndex,
-          weakHash:   Number(s.weakHash),
+          weakHash: Number(s.weakHash),
           strongHash: s.strongHashHex,
-          offset:     s.offset,
-          length:     s.length,
+          offset: s.offset,
+          length: s.length,
         }));
 
         return json({
-          fileId:     file.id,
-          versionNo:  version.versionNo,
-          blockSize:  version.blockSize,
-          chunking:   version.chunkingMode,
+          fileId: file.id,
+          versionNo: version.versionNo,
+          blockSize: version.blockSize,
+          chunking: version.chunkingMode,
           signatures,
         });
       },

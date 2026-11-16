@@ -1,4 +1,4 @@
-version: '3.8'
+version: "3.8"
 
 services:
   # The Delta Sync Engine Node.js + Rust API

@@ -2,41 +2,38 @@
  * Delta computation: fixed-size rolling window (legacy) or CDC on the new file.
  */
 
-import {
-  adler32,
-  adler32Hash,
-  rollAdler32,
-  weak16,
-  type Adler32State,
-} from "./adler32";
+import { adler32, adler32Hash, rollAdler32, weak16, type Adler32State } from "./adler32";
 import { sha256 } from "./strong-hash";
 import type { BlockSignature, ChunkingMode } from "./signatures";
 import { cdcRanges } from "../../../shared/fastcdc";
 
 export type DeltaOp =
-  | { type: "copy";    blockIndex: number; offset: number; length: number }
-  | { type: "literal"; offset: number;     bytes: Uint8Array };
+  | { type: "copy"; blockIndex: number; offset: number; length: number }
+  | { type: "literal"; offset: number; bytes: Uint8Array };
 
 export interface DeltaStats {
   totalNewBytes: number;
-  copiedBytes:   number;
-  literalBytes:  number;
-  reusedBlocks:  number;
+  copiedBytes: number;
+  literalBytes: number;
+  reusedBlocks: number;
   newLiteralRuns: number;
 }
 
 export interface DeltaResult {
-  ops:       DeltaOp[];
-  stats:     DeltaStats;
+  ops: DeltaOp[];
+  stats: DeltaStats;
   blockSize: number;
-  mode:      ChunkingMode;
+  mode: ChunkingMode;
 }
 
-function buildBucketsFixed(sigs: BlockSignature[], blockSize: number): Map<number, BlockSignature[]> {
+function buildBucketsFixed(
+  sigs: BlockSignature[],
+  blockSize: number,
+): Map<number, BlockSignature[]> {
   const buckets = new Map<number, BlockSignature[]>();
   for (const sig of sigs) {
     if (sig.length !== blockSize) continue;
-    const key  = weak16(sig.weak);
+    const key = weak16(sig.weak);
     const list = buckets.get(key);
     if (list) list.push(sig);
     else buckets.set(key, [sig]);
@@ -47,7 +44,7 @@ function buildBucketsFixed(sigs: BlockSignature[], blockSize: number): Map<numbe
 function buildBucketsAll(sigs: BlockSignature[]): Map<number, BlockSignature[]> {
   const buckets = new Map<number, BlockSignature[]>();
   for (const sig of sigs) {
-    const key  = weak16(sig.weak);
+    const key = weak16(sig.weak);
     const list = buckets.get(key);
     if (list) list.push(sig);
     else buckets.set(key, [sig]);
@@ -68,20 +65,20 @@ export async function computeDelta(
   }
 
   const stats: DeltaStats = {
-    totalNewBytes:  newBytes.length,
-    copiedBytes:    0,
-    literalBytes:   0,
-    reusedBlocks:   0,
+    totalNewBytes: newBytes.length,
+    copiedBytes: 0,
+    literalBytes: 0,
+    reusedBlocks: 0,
     newLiteralRuns: 0,
   };
 
   const ops: DeltaOp[] = [];
   for (const op of results) {
     if (op.type === "copy") {
-      stats.copiedBytes  += op.length;
+      stats.copiedBytes += op.length;
       stats.reusedBlocks += 1;
     } else {
-      stats.literalBytes   += op.bytes.length;
+      stats.literalBytes += op.bytes.length;
       stats.newLiteralRuns += 1;
     }
     ops.push(op);
@@ -110,18 +107,22 @@ export async function* computeDeltaChunked(
     return;
   }
 
-  let i            = 0;
+  let i = 0;
   let literalStart = 0;
   let state: Adler32State = adler32(newBytes, 0, blockSize);
 
   const yieldLiteral = function* (until: number): Generator<DeltaOp> {
     if (until > literalStart) {
-      yield { type: "literal", offset: literalStart, bytes: newBytes.subarray(literalStart, until).slice() };
+      yield {
+        type: "literal",
+        offset: literalStart,
+        bytes: newBytes.subarray(literalStart, until).slice(),
+      };
     }
   };
 
   while (i + blockSize <= newBytes.length) {
-    const hash       = adler32Hash(state);
+    const hash = adler32Hash(state);
     const candidates = buckets.get(weak16(hash));
     let matched: BlockSignature | null = null;
 
@@ -137,7 +138,7 @@ export async function* computeDeltaChunked(
     if (matched) {
       yield* yieldLiteral(i);
       yield { type: "copy", blockIndex: matched.index, offset: i, length: blockSize };
-      i           += blockSize;
+      i += blockSize;
       literalStart = i;
       if (i + blockSize <= newBytes.length) {
         state = adler32(newBytes, i, i + blockSize);
@@ -146,7 +147,10 @@ export async function* computeDeltaChunked(
       }
     } else {
       const next = i + blockSize;
-      if (next >= newBytes.length) { i += 1; break; }
+      if (next >= newBytes.length) {
+        i += 1;
+        break;
+      }
       state = rollAdler32(state, newBytes[i], newBytes[next]);
       i += 1;
     }

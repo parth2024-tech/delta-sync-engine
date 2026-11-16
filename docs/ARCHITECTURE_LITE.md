@@ -30,7 +30,7 @@ graph TD
     NodeAPI <-->|Embedded DB| SQLite[(SQLite Database)]
     Client -->|2. Direct Upload via Pre-signed URL| S3[(S3 Compatible Storage)]
     NodeAPI -->|3. Commit & Async Verification| S3
-    
+
     subgraph Background Processing [Direct Async Calls (No BullMQ/Redis)]
         NodeAPI -.->|Trigger| GC[Garbage Collector]
         NodeAPI -.->|Trigger| Verify[Chunk Verifier]

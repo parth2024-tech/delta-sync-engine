@@ -38,12 +38,12 @@ deltasync status
 
 ## Commands
 
-| Command | Description |
-|---------|-------------|
-| `deltasync init` | Initialise config in `.deltasync/` |
-| `deltasync push <file>` | Upload changed bytes to server |
+| Command                               | Description                         |
+| ------------------------------------- | ----------------------------------- |
+| `deltasync init`                      | Initialise config in `.deltasync/`  |
+| `deltasync push <file>`               | Upload changed bytes to server      |
 | `deltasync pull <file> [--version N]` | Download file (or specific version) |
-| `deltasync status` | Compare local vs server |
+| `deltasync status`                    | Compare local vs server             |
 
 ## How it works
 

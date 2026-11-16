@@ -29,48 +29,65 @@ export const Route = createFileRoute("/api/public/sync/download")({
           return json({ error: "Download rate limit exceeded" }, 429);
         }
 
-        const body = await request.json() as { path?: string; version?: number; force?: boolean };
+        const body = (await request.json()) as { path?: string; version?: number; force?: boolean };
         if (!body?.path) return json({ error: "path required" }, 400);
 
-        const [file] = await db.select().from(files)
+        const [file] = await db
+          .select()
+          .from(files)
           .where(and(eq(files.userId, userId), eq(files.path, body.path)));
         if (!file) return json({ error: "File not found" }, 404);
 
         let version;
         if (body.version != null) {
-          [version] = await db.select().from(fileVersions)
+          [version] = await db
+            .select()
+            .from(fileVersions)
             .where(and(eq(fileVersions.fileId, file.id), eq(fileVersions.versionNo, body.version)));
         } else {
-          [version] = await db.select().from(fileVersions)
+          [version] = await db
+            .select()
+            .from(fileVersions)
             .where(eq(fileVersions.fileId, file.id))
-            .orderBy(desc(fileVersions.versionNo)).limit(1);
+            .orderBy(desc(fileVersions.versionNo))
+            .limit(1);
         }
         if (!version) return json({ error: "Version not found" }, 404);
 
         // Block downloads of corrupted versions
         if (version.verificationStatus === "corrupted") {
-          return json({
-            error: "This version has been flagged as corrupted. Some chunks are missing from storage.",
-            versionId: version.id,
-            versionNo: version.versionNo,
-          }, 409);
+          return json(
+            {
+              error:
+                "This version has been flagged as corrupted. Some chunks are missing from storage.",
+              versionId: version.id,
+              versionNo: version.versionNo,
+            },
+            409,
+          );
         }
 
         // Warn on pending verification (allow with ?force=true)
         if (version.verificationStatus === "pending" && !body.force) {
-          return json({
-            status: "pending_verification",
-            message: "This version is still being verified. Retry shortly or pass force=true.",
-            retryAfter: 5,
-            versionId: version.id,
-            versionNo: version.versionNo,
-          }, 202);
+          return json(
+            {
+              status: "pending_verification",
+              message: "This version is still being verified. Retry shortly or pass force=true.",
+              retryAfter: 5,
+              versionId: version.id,
+              versionNo: version.versionNo,
+            },
+            202,
+          );
         }
 
         // Byte quota: 500 MB/min per user
         const fileSize = Number(version.size);
         if (!checkByteQuota(userId, fileSize)) {
-          return json({ error: "Download byte quota exceeded (500 MB/min). Try again later." }, 429);
+          return json(
+            { error: "Download byte quota exceeded (500 MB/min). Try again later." },
+            429,
+          );
         }
 
         const chunks = await loadVersionChunks(db, version.id, version);
@@ -96,7 +113,7 @@ export const Route = createFileRoute("/api/public/sync/download")({
 
         return new Response(stream, {
           headers: {
-            "Content-Type":        "application/octet-stream",
+            "Content-Type": "application/octet-stream",
             "Content-Disposition": `attachment; filename="${filename}"`,
             ...(fileSize > 0 ? { "Content-Length": String(fileSize) } : {}),
           },

@@ -142,7 +142,9 @@ export class FlatManifestReader {
     }
     const expectedSize = HEADER_SIZE + this.opCount * OP_ROW_SIZE;
     if (this.buf.length < expectedSize) {
-      throw new Error(`Truncated FlatManifest: have ${this.buf.length} bytes, need ${expectedSize}`);
+      throw new Error(
+        `Truncated FlatManifest: have ${this.buf.length} bytes, need ${expectedSize}`,
+      );
     }
   }
 

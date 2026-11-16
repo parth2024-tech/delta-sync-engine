@@ -62,18 +62,10 @@ export async function storeBlock(hash: string, data: Uint8Array): Promise<void> 
     }
 
     if (error.Code === "NoSuchBucket") {
-      throw new BlockStoreError(
-        "SERVER_ERROR",
-        `S3 bucket ${BUCKET_NAME} does not exist`,
-        error,
-      );
+      throw new BlockStoreError("SERVER_ERROR", `S3 bucket ${BUCKET_NAME} does not exist`, error);
     }
 
-    throw new BlockStoreError(
-      "SERVER_ERROR",
-      `Failed to store block: ${error.message}`,
-      error,
-    );
+    throw new BlockStoreError("SERVER_ERROR", `Failed to store block: ${error.message}`, error);
   }
 }
 
@@ -90,10 +82,7 @@ export async function fetchBlock(hash: string): Promise<Uint8Array> {
 
     const buf = await response.Body?.transformToByteArray();
     if (!buf) {
-      throw new BlockStoreError(
-        "NOT_FOUND",
-        `Block ${hash} returned empty body`,
-      );
+      throw new BlockStoreError("NOT_FOUND", `Block ${hash} returned empty body`);
     }
 
     log.debug({ hash, size: buf.length }, "Block fetched");
@@ -119,11 +108,7 @@ export async function fetchBlock(hash: string): Promise<Uint8Array> {
       );
     }
 
-    throw new BlockStoreError(
-      "SERVER_ERROR",
-      `Failed to fetch block: ${error.message}`,
-      error,
-    );
+    throw new BlockStoreError("SERVER_ERROR", `Failed to fetch block: ${error.message}`, error);
   }
 }
 

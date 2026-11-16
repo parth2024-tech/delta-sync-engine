@@ -12,9 +12,13 @@ import {
 } from "./db.js";
 import { buildSignatures, adaptiveChunkSize, contentHash } from "./rsync.js";
 import * as api from "./api.js";
+import { fetchWithTimeout, sleepWithJitter } from "./api.js";
 import type { Config } from "./config.js";
 
-const UPLOAD_CONCURRENCY = Math.max(1, Math.min(32, parseInt(process.env.DELTASYNC_CONCURRENCY || "8", 10) || 8));
+const UPLOAD_CONCURRENCY = Math.max(
+  1,
+  Math.min(32, parseInt(process.env.DELTASYNC_CONCURRENCY || "8", 10) || 8),
+);
 
 function fmtBytes(b: number) {
   if (b >= 1e9) return `${(b / 1e9).toFixed(1)} GB`;
@@ -27,12 +31,12 @@ function fmtBytes(b: number) {
 async function parallelLimit<T, R>(
   items: T[],
   limit: number,
-  fn: (item: T) => Promise<R>
+  fn: (item: T) => Promise<R>,
 ): Promise<R[]> {
   const results: R[] = [];
   const promises: Promise<void>[] = [];
   let index = 0;
-  
+
   async function worker() {
     while (index < items.length) {
       const curIndex = index++;
@@ -40,7 +44,7 @@ async function parallelLimit<T, R>(
       results[curIndex] = await fn(item);
     }
   }
-  
+
   for (let i = 0; i < Math.min(limit, items.length); i++) {
     promises.push(worker());
   }
@@ -64,9 +68,9 @@ export async function performPush(
     throw new Error(`File not found: ${filePath}`);
   }
 
-  const stat   = statSync(filePath);
-  const data   = readFileSync(filePath);
-  const hash   = await contentHash(data);
+  const stat = statSync(filePath);
+  const data = readFileSync(filePath);
+  const hash = await contentHash(data);
   const cached = getFile(filePath);
 
   if (cached?.last_hash === hash) {
@@ -82,7 +86,9 @@ export async function performPush(
   const adaptiveSize = adaptiveChunkSize(data.length);
   const blockSize = adaptiveSize > 0 ? adaptiveSize : 16384;
 
-  console.log(`Building variable signatures for ${filePath} (CDC average: ${fmtBytes(blockSize)})…`);
+  console.log(
+    `Building variable signatures for ${filePath} (CDC average: ${fmtBytes(blockSize)})…`,
+  );
   const sigs = await buildSignatures(data, { chunking: "cdc", blockSize });
 
   // Map signatures to negotiate schema chunks list
@@ -93,14 +99,20 @@ export async function performPush(
   }));
 
   if (session && session.contentSha256 === hash) {
-    console.log(`[ResumeEngine] Found incomplete session for ${filePath}. Reconciling staging area…`);
+    console.log(
+      `[ResumeEngine] Found incomplete session for ${filePath}. Reconciling staging area…`,
+    );
     try {
       const resumeResult = await api.resumeNegotiation(cfg, session.negotiationId);
       negotiationId = resumeResult.negotiationId;
       missingChunks = resumeResult.missingChunks;
-      console.log(`[ResumeEngine] Reconciled: ${resumeResult.alreadyUploaded}/${resumeResult.totalChunks} chunks already committed. Resuming Sync.`);
+      console.log(
+        `[ResumeEngine] Reconciled: ${resumeResult.alreadyUploaded}/${resumeResult.totalChunks} chunks already committed. Resuming Sync.`,
+      );
     } catch (err) {
-      console.warn(`[ResumeEngine] Failed to resume session ${session.negotiationId}: ${(err as Error).message}. Starting new negotiation.`);
+      console.warn(
+        `[ResumeEngine] Failed to resume session ${session.negotiationId}: ${(err as Error).message}. Starting new negotiation.`,
+      );
       deleteNegotiationSession(filePath);
       session = undefined;
     }
@@ -124,125 +136,132 @@ export async function performPush(
 
   // 2. SPARSE PAYLOAD RECONSTRUCTION: Skip local database-journaled completed chunks
   const completedLocal = getCompletedChunks(negotiationId);
-  const remainingUploads = missingChunks.filter(c => !completedLocal.has(c.strongHash));
+  const remainingUploads = missingChunks.filter((c) => !completedLocal.has(c.strongHash));
 
   const skippedLocalCount = missingChunks.length - remainingUploads.length;
   if (skippedLocalCount > 0) {
-    console.log(`[ResumeEngine] Journal check: skipped ${skippedLocalCount} locally completed chunks.`);
+    console.log(
+      `[ResumeEngine] Journal check: skipped ${skippedLocalCount} locally completed chunks.`,
+    );
   }
 
   // 3. HIGH-CONCURRENCY CHUNK STREAMING
   if (remainingUploads.length > 0) {
-    console.log(`[ResumeEngine] Uploading ${remainingUploads.length} missing chunks directly to S3 (concurrency: ${UPLOAD_CONCURRENCY})…`);
-    
+    console.log(
+      `[ResumeEngine] Uploading ${remainingUploads.length} missing chunks directly to S3 (concurrency: ${UPLOAD_CONCURRENCY})…`,
+    );
+
     // Map each chunk to its corresponding signature to find offset
-    const uploadsWithMetadata = remainingUploads.map(c => {
-      const sig = sigs.find(s => s.strongHash === c.strongHash);
+    const uploadsWithMetadata = remainingUploads.map((c) => {
+      const sig = sigs.find((s) => s.strongHash === c.strongHash);
       if (!sig) throw new Error(`Hash mismatch for chunk ${c.strongHash}`);
       return { ...c, offset: sig.offset, length: sig.length };
     });
 
     let activeLimit = UPLOAD_CONCURRENCY;
     let consecutiveSuccesses = 0;
-    let index = 0;
-    let activeCount = 0;
+    let activeWorkers = 0;
     let uploadError: Error | null = null;
+    const taskQueue = [...uploadsWithMetadata];
 
-    const runWorker = async () => {
-      activeCount++;
-      try {
-        while (index < uploadsWithMetadata.length && !uploadError) {
-          if (activeCount > activeLimit) {
-            break;
-          }
+    await new Promise<void>((resolve, reject) => {
+      const spawnWorkers = () => {
+        if (uploadError) {
+          if (activeWorkers === 0) reject(uploadError);
+          return;
+        }
 
-          const chunk = uploadsWithMetadata[index++];
+        if (taskQueue.length === 0 && activeWorkers === 0) {
+          resolve();
+          return;
+        }
+
+        while (activeWorkers < activeLimit && taskQueue.length > 0 && !uploadError) {
+          const chunk = taskQueue.shift();
           if (!chunk) break;
 
+          activeWorkers++;
           const chunkData = data.subarray(chunk.offset, chunk.offset + chunk.length);
-          let attempts = 3;
-          let delayMs = 1000;
-          const startTime = Date.now();
 
-          while (attempts > 0 && !uploadError) {
-            try {
-              const r = await fetch(chunk.uploadUrl, {
-                method: "PUT",
-                body: chunkData,
-                headers: {
-                  "Content-Type": "application/octet-stream",
-                  "Content-Length": String(chunk.length),
-                },
-              });
+          (async () => {
+            let attempts = 3;
+            const startTime = Date.now();
 
-              if (r.status === 503 || r.status === 429) {
-                activeLimit = Math.max(1, activeLimit - 1);
-                consecutiveSuccesses = 0;
-                console.warn(
-                  `[S3:Concurrency] HTTP ${r.status} Slow Down detected for chunk ${chunk.strongHash}. ` +
-                  `Scaling concurrency limit down to ${activeLimit}.`
+            while (attempts > 0 && !uploadError) {
+              try {
+                const r = await fetchWithTimeout(
+                  chunk.uploadUrl,
+                  {
+                    method: "PUT",
+                    body: chunkData,
+                    headers: {
+                      "Content-Type": "application/octet-stream",
+                      "Content-Length": String(chunk.length),
+                    },
+                  },
+                  30000,
                 );
-                attempts--;
-                if (attempts > 0) {
-                  await new Promise(res => setTimeout(res, delayMs));
-                  delayMs *= 2;
-                  continue;
-                }
-                throw new Error(`S3 rate limit exceeded (HTTP ${r.status})`);
-              }
 
-              if (!r.ok) {
-                throw new Error(`HTTP ${r.status} ${r.statusText}`);
-              }
-
-              const latency = Date.now() - startTime;
-              if (latency < 400) {
-                consecutiveSuccesses++;
-                if (consecutiveSuccesses >= 5) {
-                  const prevLimit = activeLimit;
-                  activeLimit = Math.min(UPLOAD_CONCURRENCY, activeLimit + 1);
-                  if (activeLimit > prevLimit) {
-                    console.log(`[S3:Concurrency] Low latency observed (${latency}ms). Scaling concurrency limit up to ${activeLimit}.`);
+                if (r.status === 503 || r.status === 429) {
+                  activeLimit = Math.max(1, activeLimit - 1);
+                  consecutiveSuccesses = 0;
+                  console.warn(
+                    `[S3:Concurrency] HTTP ${r.status} Slow Down detected for chunk ${chunk.strongHash}. ` +
+                      `Scaling concurrency limit down to ${activeLimit}.`,
+                  );
+                  attempts--;
+                  if (attempts > 0) {
+                    await sleepWithJitter(3 - attempts, 1000, 30000);
+                    continue;
                   }
+                  throw new Error(`S3 rate limit exceeded (HTTP ${r.status})`);
+                }
+
+                if (!r.ok) {
+                  throw new Error(`HTTP ${r.status} ${r.statusText}`);
+                }
+
+                const latency = Date.now() - startTime;
+                if (latency < 400) {
+                  consecutiveSuccesses++;
+                  if (consecutiveSuccesses >= 5) {
+                    const prevLimit = activeLimit;
+                    activeLimit = Math.min(UPLOAD_CONCURRENCY, activeLimit + 1);
+                    if (activeLimit > prevLimit) {
+                      console.log(
+                        `[S3:Concurrency] Low latency observed (${latency}ms). Scaling concurrency limit up to ${activeLimit}.`,
+                      );
+                    }
+                    consecutiveSuccesses = 0;
+                  }
+                } else {
                   consecutiveSuccesses = 0;
                 }
-              } else {
-                consecutiveSuccesses = 0;
-              }
 
-              recordChunkStatus(negotiationId!, chunk.strongHash, "completed");
-              break;
-            } catch (err) {
-              attempts--;
-              if (attempts === 0) {
-                console.error(`[ResumeEngine] ✗ Failed to upload chunk ${chunk.strongHash}: ${(err as Error).message}`);
-                uploadError = err as Error;
+                recordChunkStatus(negotiationId!, chunk.strongHash, "completed");
                 break;
+              } catch (err: unknown) {
+                attempts--;
+                const errMsg = err instanceof Error ? err.message : String(err);
+                if (attempts === 0) {
+                  console.error(
+                    `[ResumeEngine] ✗ Failed to upload chunk ${chunk.strongHash}: ${errMsg}`,
+                  );
+                  uploadError = err instanceof Error ? err : new Error(String(err));
+                  break;
+                }
+                await sleepWithJitter(3 - attempts, 1000, 30000);
               }
-              await new Promise(res => setTimeout(res, delayMs));
-              delayMs *= 2;
             }
-          }
-
-          while (activeCount < activeLimit && index < uploadsWithMetadata.length && !uploadError) {
-            void runWorker();
-          }
+          })().finally(() => {
+            activeWorkers--;
+            spawnWorkers();
+          });
         }
-      } finally {
-        activeCount--;
-      }
-    };
+      };
 
-    const initialPromises: Promise<void>[] = [];
-    for (let i = 0; i < Math.min(UPLOAD_CONCURRENCY, uploadsWithMetadata.length); i++) {
-      initialPromises.push(runWorker());
-    }
-
-    await Promise.all(initialPromises);
-
-    if (uploadError) {
-      throw uploadError;
-    }
+      spawnWorkers();
+    });
   } else {
     console.log(`[ResumeEngine] All chunks are already uploaded to S3 staging.`);
   }
@@ -257,7 +276,9 @@ export async function performPush(
 
   upsertFile(filePath, stat.mtimeMs, stat.size, hash, commitResult.versionNo);
   const savedPct = data.length > 0 ? Math.round((commitResult.bytesSaved / data.length) * 100) : 0;
-  console.log(`✓ pushed v${commitResult.versionNo} — saved ${fmtBytes(commitResult.bytesSaved)} (${savedPct}%)`);
-  
+  console.log(
+    `✓ pushed v${commitResult.versionNo} — saved ${fmtBytes(commitResult.bytesSaved)} (${savedPct}%)`,
+  );
+
   return commitResult;
 }

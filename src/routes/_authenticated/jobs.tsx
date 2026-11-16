@@ -16,12 +16,12 @@ function fmt(bytes: number) {
 }
 
 function JobsPage() {
-  const [page, setPage]         = useState(1);
+  const [page, setPage] = useState(1);
   const [expanded, setExpanded] = useState<string | null>(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ["sync-jobs", page],
-    queryFn:  () => listSyncJobs({ data: { page, pageSize: 20 } }),
+    queryFn: () => listSyncJobs({ data: { page, pageSize: 20 } }),
   });
 
   return (
@@ -44,7 +44,12 @@ function JobsPage() {
               <thead>
                 <tr className="border-b border-border">
                   {["File", "Dir", "Transferred", "Saved", "Status", "Started", ""].map((h) => (
-                    <th key={h} className="px-4 py-3 text-left font-mono text-[10px] uppercase tracking-widest text-muted-foreground">{h}</th>
+                    <th
+                      key={h}
+                      className="px-4 py-3 text-left font-mono text-[10px] uppercase tracking-widest text-muted-foreground"
+                    >
+                      {h}
+                    </th>
                   ))}
                 </tr>
               </thead>
@@ -56,35 +61,62 @@ function JobsPage() {
                       className="border-b border-border/50 hover:bg-secondary/20 cursor-pointer"
                       onClick={() => setExpanded(expanded === j.id ? null : j.id)}
                     >
-                      <td className="px-4 py-3 font-mono text-xs text-primary max-w-xs truncate">{j.filePath ?? "—"}</td>
+                      <td className="px-4 py-3 font-mono text-xs text-primary max-w-xs truncate">
+                        {j.filePath ?? "—"}
+                      </td>
                       <td className="px-4 py-3 font-mono text-xs">{j.direction}</td>
-                      <td className="px-4 py-3 font-mono text-xs">{fmt(Number(j.bytesTransferred))}</td>
-                      <td className="px-4 py-3 font-mono text-xs text-amber-400">{fmt(Number(j.bytesSaved))}</td>
+                      <td className="px-4 py-3 font-mono text-xs">
+                        {fmt(Number(j.bytesTransferred))}
+                      </td>
+                      <td className="px-4 py-3 font-mono text-xs text-amber-400">
+                        {fmt(Number(j.bytesSaved))}
+                      </td>
                       <td className="px-4 py-3">
-                        <span className={`font-mono text-[10px] rounded px-1.5 py-0.5 ${
-                          j.status === "done"  ? "bg-emerald-500/20 text-emerald-400" :
-                          j.status === "error" ? "bg-red-500/20 text-red-400" :
-                                                 "bg-amber-500/20 text-amber-400"}`}>
+                        <span
+                          className={`font-mono text-[10px] rounded px-1.5 py-0.5 ${
+                            j.status === "done"
+                              ? "bg-emerald-500/20 text-emerald-400"
+                              : j.status === "error"
+                                ? "bg-red-500/20 text-red-400"
+                                : "bg-amber-500/20 text-amber-400"
+                          }`}
+                        >
                           {j.status}
                         </span>
                       </td>
                       <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
                         {new Date(j.startedAt!).toLocaleString()}
                       </td>
-                      <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{expanded === j.id ? "▲" : "▼"}</td>
+                      <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
+                        {expanded === j.id ? "▲" : "▼"}
+                      </td>
                     </tr>
                     {expanded === j.id && (
                       <tr key={j.id + "-exp"} className="border-b border-border/30 bg-secondary/10">
                         <td colSpan={7} className="px-4 py-3">
                           <div className="font-mono text-xs space-y-1">
-                            <p><span className="text-muted-foreground">id:</span> {j.id}</p>
-                            <p><span className="text-muted-foreground">finished:</span> {j.finishedAt ? new Date(j.finishedAt).toLocaleString() : "—"}</p>
-                            {j.error && <p><span className="text-red-400">error:</span> {j.error}</p>}
+                            <p>
+                              <span className="text-muted-foreground">id:</span> {j.id}
+                            </p>
+                            <p>
+                              <span className="text-muted-foreground">finished:</span>{" "}
+                              {j.finishedAt ? new Date(j.finishedAt).toLocaleString() : "—"}
+                            </p>
+                            {j.error && (
+                              <p>
+                                <span className="text-red-400">error:</span> {j.error}
+                              </p>
+                            )}
                             <p>
                               <span className="text-muted-foreground">savings ratio:</span>{" "}
                               {Number(j.bytesTransferred) + Number(j.bytesSaved) > 0
-                                ? Math.round((Number(j.bytesSaved) / (Number(j.bytesTransferred) + Number(j.bytesSaved))) * 100)
-                                : 0}%
+                                ? Math.round(
+                                    (Number(j.bytesSaved) /
+                                      (Number(j.bytesTransferred) + Number(j.bytesSaved))) *
+                                      100,
+                                  )
+                                : 0}
+                              %
                             </p>
                           </div>
                         </td>
@@ -99,9 +131,21 @@ function JobsPage() {
       </div>
 
       <div className="mt-4 flex items-center gap-3">
-        <button disabled={page <= 1} onClick={() => setPage((p) => p - 1)} className="rounded border border-border px-3 py-1 font-mono text-xs disabled:opacity-40">← prev</button>
+        <button
+          disabled={page <= 1}
+          onClick={() => setPage((p) => p - 1)}
+          className="rounded border border-border px-3 py-1 font-mono text-xs disabled:opacity-40"
+        >
+          ← prev
+        </button>
         <span className="font-mono text-xs text-muted-foreground">page {page}</span>
-        <button disabled={(data ?? []).length < 20} onClick={() => setPage((p) => p + 1)} className="rounded border border-border px-3 py-1 font-mono text-xs disabled:opacity-40">next →</button>
+        <button
+          disabled={(data ?? []).length < 20}
+          onClick={() => setPage((p) => p + 1)}
+          className="rounded border border-border px-3 py-1 font-mono text-xs disabled:opacity-40"
+        >
+          next →
+        </button>
       </div>
     </div>
   );

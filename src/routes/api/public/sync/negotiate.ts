@@ -24,10 +24,7 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { getS3Key } from "../../../../../shared/hash";
 
-import {
-  S3Client,
-  HeadObjectCommand,
-} from "@aws-sdk/client-s3";
+import { S3Client, HeadObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 
@@ -51,15 +48,20 @@ import { setNegotiation } from "../../../../../server/negotiation-store";
 
 const chunkInfoSchema = z.object({
   strongHash: z.string().length(64),
-  length: z.number().int().min(1).max(4 * 1024 * 1024),
+  length: z
+    .number()
+    .int()
+    .min(1)
+    .max(4 * 1024 * 1024),
   weakHash: z.number().int().optional(),
 });
 
 const negotiateSchema = z.object({
-  path: z.string().min(1).max(1024).refine(
-    (p) => !p.startsWith("/") && !p.includes("../") && !p.includes("./"),
-    "Invalid path",
-  ),
+  path: z
+    .string()
+    .min(1)
+    .max(1024)
+    .refine((p) => !p.startsWith("/") && !p.includes("../") && !p.includes("./"), "Invalid path"),
   chunking: z.enum(["cdc", "fixed"]).optional().default("cdc"),
   blockSize: z.number().int().min(256).max(1048576),
   newSize: z.number().int().min(0),
@@ -101,7 +103,9 @@ export const Route = createFileRoute("/api/public/sync/negotiate")({
         }
 
         // Look up existing file to find reusable chunks from previous version
-        const [existingFile] = await db.select().from(files)
+        const [existingFile] = await db
+          .select()
+          .from(files)
           .where(and(eq(files.userId, userId), eq(files.path, body.path)));
 
         const snapshotCurrentVersionId = existingFile?.currentVersionId ?? null;
@@ -109,7 +113,9 @@ export const Route = createFileRoute("/api/public/sync/negotiate")({
         // Load previous chunks to identify which chunks the client can "copy"
         const prevChunks = await (async () => {
           if (!existingFile?.currentVersionId) return [];
-          const [ver] = await db.select().from(fileVersions)
+          const [ver] = await db
+            .select()
+            .from(fileVersions)
             .where(eq(fileVersions.id, existingFile.currentVersionId));
           if (!ver) return [];
           return loadVersionChunks(db, existingFile.currentVersionId, ver);
@@ -188,14 +194,14 @@ export const Route = createFileRoute("/api/public/sync/negotiate")({
         // Create a negotiation token (stored in memory) to validate the commit phase
         const negotiationId = crypto.randomUUID();
         setNegotiation(negotiationId, {
-            userId,
-            path: body.path,
-            chunking: body.chunking,
-            blockSize: body.blockSize,
-            newSize: body.newSize,
-            contentSha256: body.contentSha256,
-            chunks: body.chunks,
-            snapshotCurrentVersionId,
+          userId,
+          path: body.path,
+          chunking: body.chunking,
+          blockSize: body.blockSize,
+          newSize: body.newSize,
+          contentSha256: body.contentSha256,
+          chunks: body.chunks,
+          snapshotCurrentVersionId,
         });
 
         return json({

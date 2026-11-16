@@ -63,26 +63,26 @@ export const SMALL_FILE_THRESHOLD = 32 * 1024; // 32 KB
  * Returns 0 for files below the small-file threshold (meaning: skip CDC).
  */
 export function adaptiveChunkSize(fileSize: number): number {
-  if (fileSize < SMALL_FILE_THRESHOLD) return 0;       // skip CDC
-  if (fileSize < 256 * 1024) return 4096;               // 4 KiB avg
-  if (fileSize < 10 * 1024 * 1024) return 16384;        // 16 KiB avg (default)
-  return 65536;                                          // 64 KiB avg
+  if (fileSize < SMALL_FILE_THRESHOLD) return 0; // skip CDC
+  if (fileSize < 256 * 1024) return 4096; // 4 KiB avg
+  if (fileSize < 10 * 1024 * 1024) return 16384; // 16 KiB avg (default)
+  return 65536; // 64 KiB avg
 }
 
 export interface Signature {
   blockIndex: number;
-  weakHash:   number;
+  weakHash: number;
   strongHash: string;
-  offset:     number;
-  length:     number;
+  offset: number;
+  length: number;
 }
 
 export type Op =
-  | { type: "copy";    blockIndex: number }
+  | { type: "copy"; blockIndex: number }
   | { type: "literal"; literalOffset: number; literalLength: number };
 
 export interface DeltaResult {
-  ops:          Op[];
+  ops: Op[];
   literalBytes: Buffer;
 }
 
@@ -114,14 +114,17 @@ export async function buildSignatures(data: Buffer, opts: BuildSigOpts): Promise
   if (opts.chunking === "fixed") {
     const blockSize = opts.blockSize;
     const sigs: Signature[] = [];
-    let offset = 0, idx = 0;
+    let offset = 0,
+      idx = 0;
     while (offset < data.length) {
       const end = Math.min(offset + blockSize, data.length);
       const chunk = data.subarray(offset, end);
       sigs.push({
         blockIndex: idx++,
-        weakHash:   nativeAddon.isNative ? nativeAddon.adler32Native(chunk) : adler32(chunk),
-        strongHash: nativeAddon.isNative ? await nativeAddon.sha256Native(chunk) : await sha256Hex(chunk),
+        weakHash: nativeAddon.isNative ? nativeAddon.adler32Native(chunk) : adler32(chunk),
+        strongHash: nativeAddon.isNative
+          ? await nativeAddon.sha256Native(chunk)
+          : await sha256Hex(chunk),
         offset,
         length: end - offset,
       });
@@ -143,10 +146,12 @@ export async function buildSignatures(data: Buffer, opts: BuildSigOpts): Promise
     const chunk = data.subarray(start, end);
     sigs.push({
       blockIndex: idx++,
-      weakHash:   nativeAddon.isNative ? nativeAddon.adler32Native(chunk) : adler32(chunk),
-      strongHash: nativeAddon.isNative ? await nativeAddon.sha256Native(chunk) : await sha256Hex(chunk),
-      offset:     start,
-      length:     end - start,
+      weakHash: nativeAddon.isNative ? nativeAddon.adler32Native(chunk) : adler32(chunk),
+      strongHash: nativeAddon.isNative
+        ? await nativeAddon.sha256Native(chunk)
+        : await sha256Hex(chunk),
+      offset: start,
+      length: end - start,
     });
   }
   return sigs;
@@ -159,7 +164,7 @@ export async function computeDelta(
 ): Promise<DeltaResult> {
   if (!remoteSigs.length) {
     return {
-      ops:          [{ type: "literal", literalOffset: 0, literalLength: newData.length }],
+      ops: [{ type: "literal", literalOffset: 0, literalLength: newData.length }],
       literalBytes: newData,
     };
   }
@@ -204,7 +209,9 @@ async function computeDeltaFixed(
     const candidates = weakMap.get(weak16(weak));
 
     if (candidates) {
-      const strong = nativeAddon.isNative ? await nativeAddon.sha256Native(slice) : await sha256Hex(slice);
+      const strong = nativeAddon.isNative
+        ? await nativeAddon.sha256Native(slice)
+        : await sha256Hex(slice);
       const match = candidates.find((c) => c.weakHash === weak && c.strongHash === strong);
       if (match) {
         flushLiteral(i);
@@ -248,7 +255,9 @@ async function computeDeltaCdc(
   for (const { start, end } of ranges) {
     const slice = newData.subarray(start, end);
     const weak = nativeAddon.isNative ? nativeAddon.adler32Native(slice) : adler32(slice);
-    const strong = nativeAddon.isNative ? await nativeAddon.sha256Native(slice) : await sha256Hex(slice);
+    const strong = nativeAddon.isNative
+      ? await nativeAddon.sha256Native(slice)
+      : await sha256Hex(slice);
     const candidates = weakMap.get(weak16(weak));
     const match = candidates?.find(
       (c) => c.weakHash === weak && c.strongHash === strong && c.length === slice.length,

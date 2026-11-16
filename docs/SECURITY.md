@@ -57,6 +57,7 @@ Before deploying Deltasync to production, ensure all items are completed:
 **Use a secrets manager in production:**
 
 - **AWS Secrets Manager**
+
   ```bash
   aws secretsmanager create-secret \
     --name deltasync/jwt-secret \
@@ -64,6 +65,7 @@ Before deploying Deltasync to production, ensure all items are completed:
   ```
 
 - **HashiCorp Vault**
+
   ```bash
   vault kv put secret/deltasync/prod \
     jwt_secret="$(openssl rand -base64 32)" \
@@ -88,7 +90,7 @@ Before deploying Deltasync to production, ensure all items are completed:
 // Format: dks_<base64url-44-chars>
 // Example: dks_KR-gKzAM_wN8...
 
-import { generateApiKey, hashApiKey } from './server/api-key';
+import { generateApiKey, hashApiKey } from "./server/api-key";
 
 const key = generateApiKey(); // User sees this once
 const hash = hashApiKey(key); // Store this in database
@@ -105,15 +107,13 @@ const hash = hashApiKey(key); // Store this in database
 
 ```typescript
 // When user logs out
-await db.update(apiKeys)
-  .set({ revokedAt: new Date() })
-  .where(eq(apiKeys.userId, userId))
-  .run();
+await db.update(apiKeys).set({ revokedAt: new Date() }).where(eq(apiKeys.userId, userId)).run();
 ```
 
 ### 3. JWT Token Security
 
 **Configuration:**
+
 - Algorithm: HS256 (HMAC-SHA256)
 - Expiry: 30 days
 - Secret: From `JWT_SECRET` environment variable
@@ -132,17 +132,19 @@ await invalidateAllSessions(userId);
 ### 4. Password Security
 
 **Hashing:**
+
 - Algorithm: bcryptjs with 12 salt rounds
 - Never store plaintext passwords
 - Never log passwords
 
 **Requirements:**
+
 - Minimum 8 characters
 - No character complexity requirement (NIST 2017 guidelines)
 - Prevent common passwords with zxcvbn library (optional)
 
 ```typescript
-import { hashPassword } from './server/auth';
+import { hashPassword } from "./server/auth";
 
 const hash = await hashPassword(password);
 // Store hash in database, never the plaintext
@@ -200,10 +202,7 @@ form-action 'self'
 **Whitelist specific origins:**
 
 ```typescript
-const allowedOrigins = [
-  'https://app.example.com',
-  'https://api.example.com',
-];
+const allowedOrigins = ["https://app.example.com", "https://api.example.com"];
 
 export function corsMiddleware(origin: string): boolean {
   return allowedOrigins.includes(origin);
@@ -251,10 +250,12 @@ CREATE POLICY user_isolation ON files
 ### 2. Encryption at Rest
 
 **Database:**
+
 - AWS RDS: Enable encryption at launch
 - PostgreSQL: Use pgcrypto or transparent disk encryption (LUKS)
 
 **S3 Blocks:**
+
 - Enable S3 server-side encryption (SSE-S3 or SSE-KMS)
 
 ### 3. Backup & Recovery
@@ -282,18 +283,17 @@ aws s3 cp s3://backups/db-latest.sql.gz - | gunzip | psql deltasync
 **Prevent path traversal:**
 
 ```typescript
-import { z } from 'zod';
+import { z } from "zod";
 
-const pathSchema = z.string()
-  .refine(path => {
-    // Reject unsafe patterns
-    if (path.includes('..')) return false;
-    if (path.includes('./')) return false;
-    if (path.startsWith('/')) return false;
-    // Reject null bytes and control characters
-    if (/[\x00-\x1f]/.test(path)) return false;
-    return true;
-  });
+const pathSchema = z.string().refine((path) => {
+  // Reject unsafe patterns
+  if (path.includes("..")) return false;
+  if (path.includes("./")) return false;
+  if (path.startsWith("/")) return false;
+  // Reject null bytes and control characters
+  if (/[\x00-\x1f]/.test(path)) return false;
+  return true;
+});
 ```
 
 ### 2. Hash Validation
@@ -304,7 +304,7 @@ const pathSchema = z.string()
 const sha256Regex = /^[a-f0-9]{64}$/;
 
 const chunkSchema = z.object({
-  strongHash: z.string().regex(sha256Regex, 'Invalid SHA-256 hash'),
+  strongHash: z.string().regex(sha256Regex, "Invalid SHA-256 hash"),
   length: z.number().positive().max(MAX_CHUNK_SIZE),
   weakHash: z.number().optional(),
 });
@@ -318,7 +318,7 @@ const MAX_REQUEST_SIZE = 10 * 1024 * 1024; // 10MB
 
 // Validate in upload handler
 if (fileSize > MAX_FILE_SIZE) {
-  throw new Error('File exceeds 500MB limit');
+  throw new Error("File exceeds 500MB limit");
 }
 ```
 
@@ -329,16 +329,17 @@ if (fileSize > MAX_FILE_SIZE) {
 ### 1. Per-User Rate Limits
 
 ```typescript
-import { rateLimit } from './server/rate-limiter';
+import { rateLimit } from "./server/rate-limiter";
 
 // Apply limits per endpoint
 export async function negotiateHandler(req, res) {
-  await rateLimit(userId, 'negotiate', { max: 100, windowMs: 60000 });
+  await rateLimit(userId, "negotiate", { max: 100, windowMs: 60000 });
   // ... handler logic
 }
 ```
 
 **Limits:**
+
 - `/negotiate`: 100 per minute
 - `/upload`: 1000 per hour
 - `/download`: Unlimited
@@ -348,7 +349,7 @@ export async function negotiateHandler(req, res) {
 
 ```typescript
 // For unauthenticated endpoints
-const ipLimit = await rateLimit(clientIP, 'global', {
+const ipLimit = await rateLimit(clientIP, "global", {
   max: 1000,
   windowMs: 3600000, // 1 hour
 });
@@ -364,20 +365,17 @@ const ipLimit = await rateLimit(clientIP, 'global', {
 
 ```typescript
 // ❌ BAD
-console.log('User logged in with token:', token);
+console.log("User logged in with token:", token);
 
 // ✅ GOOD
-console.log('User logged in', { userId, timestamp: new Date() });
+console.log("User logged in", { userId, timestamp: new Date() });
 ```
 
 **Include correlation IDs:**
 
 ```typescript
 const correlationId = crypto.randomUUID();
-logger.info(
-  { correlationId, userId, action: 'file-upload' },
-  'File uploaded successfully'
-);
+logger.info({ correlationId, userId, action: "file-upload" }, "File uploaded successfully");
 ```
 
 ### 2. Audit Logging
@@ -388,7 +386,7 @@ logger.info(
 // Log file access
 await auditLog.create({
   userId,
-  action: 'FILE_DOWNLOADED',
+  action: "FILE_DOWNLOADED",
   resourceId: fileId,
   timestamp: new Date(),
   ipAddress: req.ip,
@@ -397,7 +395,7 @@ await auditLog.create({
 // Log permission changes
 await auditLog.create({
   userId,
-  action: 'API_KEY_CREATED',
+  action: "API_KEY_CREATED",
   resourceId: apiKeyId,
   details: { prefix: extractKeyPrefix(apiKey) },
 });
@@ -410,7 +408,7 @@ await auditLog.create({
 ```typescript
 // Alert if user fails login 5 times in 5 minutes
 if (failedAttempts > 5) {
-  await sendSecurityAlert(userId, 'Multiple failed login attempts');
+  await sendSecurityAlert(userId, "Multiple failed login attempts");
   // Lock account temporarily
 }
 
@@ -469,17 +467,17 @@ spec:
     runAsUser: 1000
     fsReadOnlyRootFilesystem: true
   containers:
-  - name: api
-    image: deltasync:latest
-    env:
-    - name: JWT_SECRET
-      valueFrom:
-        secretKeyRef:
-          name: deltasync-secrets
-          key: jwt_secret
-    securityContext:
-      allowPrivilegeEscalation: false
-      readOnlyRootFilesystem: true
+    - name: api
+      image: deltasync:latest
+      env:
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: deltasync-secrets
+              key: jwt_secret
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
 ```
 
 ---
@@ -529,5 +527,6 @@ If user passwords are compromised:
 ## Support
 
 For security concerns or to report vulnerabilities:
+
 - Email: security@example.com
 - Please do NOT open public GitHub issues for security vulnerabilities

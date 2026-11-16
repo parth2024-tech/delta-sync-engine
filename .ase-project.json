@@ -38,11 +38,7 @@
   "deployment": {
     "platform": "Vercel",
     "branch_strategy": "main → production, dev → preview",
-    "environments": [
-      "development",
-      "staging",
-      "production"
-    ]
+    "environments": ["development", "staging", "production"]
   },
   "sprint_focus": "Building the user onboarding flow with email verification and profile setup.",
   "sprint_skills": [
@@ -62,7 +58,8 @@
     "Never leave completed work uncommitted or unpushed to GitHub",
     "Never run unsolicited background daemons, update pollers, or indexing services on Arch Linux",
     "Never commit or push code without passing gitleaks protect --staged secret audit",
-    "Never rely on fragile regex linters when ast-grep (sg) AST rules can be enforced"
+    "Never rely on fragile regex linters when ast-grep (sg) AST rules can be enforced",
+    "Never generate shallow single-query research summaries without multi-source GPT Researcher aggregation and verified citations"
   ],
   "preferred_patterns": [
     "Practice extreme token economy: keep responses concise, high-signal, and directly answer user requests without unprompted changelogs or filler",
@@ -79,7 +76,8 @@
     "Use adr-tools (adr new) and D2 (d2) for all architectural decision records and C4 system diagrams",
     "Use TypeSpec (tsp compile) for contract-first API development and OpenAPI 3.1 generation",
     "Use vl-convert (vl-convert vl2svg) and Typst CeTZ for declarative standalone vector charts",
-    "Use Typst (typst compile) exclusively for any research paper or scientific document"
+    "Use Typst (typst compile) exclusively for any research paper or scientific document",
+    "Use GPT Researcher (gpt-researcher) exclusively for any research report, technical investigation, or market study"
   ],
   "agent_skills": {
     "directory": "/home/thor/skiils/skills",
@@ -96,7 +94,8 @@
       "frontend": "anti-vibe-design",
       "ui": "anti-vibe-design",
       "architecture": "adr-architecture",
-      "secrets": "secret-guard"
+      "secrets": "secret-guard",
+      "research": "gpt-researcher"
     },
     "session_reporting_preference": true
   }

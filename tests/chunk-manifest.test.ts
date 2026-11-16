@@ -7,9 +7,9 @@ import { encodeChunkManifestV1, decodeChunkManifestV1 } from "../shared/chunk-ma
 describe("Chunk Manifest Codec", () => {
   it("round-trips a manifest with multiple chunks", () => {
     const chunks = [
-      { offset: 0,     length: 4096, weakHash: 0x12345678, strongHashHex: "a".repeat(64) },
-      { offset: 4096,  length: 4096, weakHash: 0xdeadbeef, strongHashHex: "b".repeat(64) },
-      { offset: 8192,  length: 2048, weakHash: 0x00000001, strongHashHex: "c".repeat(64) },
+      { offset: 0, length: 4096, weakHash: 0x12345678, strongHashHex: "a".repeat(64) },
+      { offset: 4096, length: 4096, weakHash: 0xdeadbeef, strongHashHex: "b".repeat(64) },
+      { offset: 8192, length: 2048, weakHash: 0x00000001, strongHashHex: "c".repeat(64) },
     ];
 
     const encoded = encodeChunkManifestV1(chunks);
@@ -47,9 +47,7 @@ describe("Chunk Manifest Codec", () => {
   });
 
   it("throws on truncated manifest", () => {
-    const chunks = [
-      { offset: 0, length: 1024, weakHash: 42, strongHashHex: "a".repeat(64) },
-    ];
+    const chunks = [{ offset: 0, length: 1024, weakHash: 42, strongHashHex: "a".repeat(64) }];
     const encoded = encodeChunkManifestV1(chunks);
     // Truncate the buffer
     const truncated = encoded.subarray(0, 20);
@@ -58,9 +56,7 @@ describe("Chunk Manifest Codec", () => {
 
   it("preserves exact hash values through round-trip", () => {
     const realHash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
-    const chunks = [
-      { offset: 0, length: 0, weakHash: 0, strongHashHex: realHash },
-    ];
+    const chunks = [{ offset: 0, length: 0, weakHash: 0, strongHashHex: realHash }];
     const decoded = decodeChunkManifestV1(encodeChunkManifestV1(chunks));
     expect(decoded[0]!.strongHashHex).toBe(realHash);
   });

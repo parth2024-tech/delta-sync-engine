@@ -60,14 +60,18 @@ class WorkStealingPool {
     // Work-Stealing: Heavy workers steal from Fast Queue if idle
     while (this.activeHeavy < this.maxHeavy && this.fastQueue.length > 0) {
       const task = this.fastQueue.shift()!;
-      console.log(`[WorkerPool] Heavy worker stole task ${task.versionId} (blocks: ${task.totalBlocks}) from fast queue`);
+      console.log(
+        `[WorkerPool] Heavy worker stole task ${task.versionId} (blocks: ${task.totalBlocks}) from fast queue`,
+      );
       this.runTask(task, "heavy");
     }
 
     // Work-Stealing: Fast workers steal from Heavy Queue to help out if idle
     while (this.activeFast < this.maxFast && this.heavyQueue.length > 0) {
       const task = this.heavyQueue.shift()!;
-      console.log(`[WorkerPool] Fast worker stole task ${task.versionId} (blocks: ${task.totalBlocks}) from heavy queue`);
+      console.log(
+        `[WorkerPool] Fast worker stole task ${task.versionId} (blocks: ${task.totalBlocks}) from heavy queue`,
+      );
       this.runTask(task, "fast");
     }
   }
@@ -97,7 +101,7 @@ class WorkStealingPool {
       {
         eval: true,
         workerData: { versionId: task.versionId },
-      }
+      },
     );
 
     worker.on("message", (msg) => {

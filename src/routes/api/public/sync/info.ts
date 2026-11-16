@@ -17,14 +17,18 @@ export const Route = createFileRoute("/api/public/sync/info")({
         const userId = await validateApiKey(request.headers.get("Authorization"));
         if (!userId) return json({ error: "Unauthorized" }, 401);
 
-        const body = await request.json() as { path?: string };
+        const body = (await request.json()) as { path?: string };
         if (!body?.path) return json({ error: "path required" }, 400);
 
-        const [file] = await db.select().from(files)
+        const [file] = await db
+          .select()
+          .from(files)
           .where(and(eq(files.userId, userId), eq(files.path, body.path)));
         if (!file) return json(null);
 
-        const [version] = await db.select().from(fileVersions)
+        const [version] = await db
+          .select()
+          .from(fileVersions)
           .where(eq(fileVersions.fileId, file.id))
           .orderBy(desc(fileVersions.versionNo))
           .limit(1);

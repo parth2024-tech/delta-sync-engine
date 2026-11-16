@@ -31,21 +31,22 @@ class ValidationError extends Error {
 
 export function validateEnvironment(): EnvironmentConfig {
   const errors: string[] = [];
-  const nodeEnv = process.env.NODE_ENV || 'development';
+  const nodeEnv = process.env.NODE_ENV || "development";
 
   // Check critical security variables
   const jwtSecret = process.env.JWT_SECRET;
   if (!jwtSecret) {
-    errors.push('JWT_SECRET is required');
+    errors.push("JWT_SECRET is required");
   } else if (
-    nodeEnv === 'production' && (
-      jwtSecret === 'deltasync-dev-secret-please-change-in-production' ||
-      jwtSecret === 'your-secret-key-here-change-in-production'
-    )
+    nodeEnv === "production" &&
+    (jwtSecret === "deltasync-dev-secret-please-change-in-production" ||
+      jwtSecret === "your-secret-key-here-change-in-production")
   ) {
-    errors.push('JWT_SECRET must not use the default development value in production. Generate a secure key with: openssl rand -base64 32');
+    errors.push(
+      "JWT_SECRET must not use the default development value in production. Generate a secure key with: openssl rand -base64 32",
+    );
   } else if (jwtSecret.length < 16) {
-    errors.push('JWT_SECRET must be at least 16 characters long');
+    errors.push("JWT_SECRET must be at least 16 characters long");
   }
 
   // Check S3 configuration
@@ -55,50 +56,46 @@ export function validateEnvironment(): EnvironmentConfig {
   const s3SecretAccessKey = process.env.S3_SECRET_ACCESS_KEY;
   const s3BucketName = process.env.S3_BUCKET_NAME;
 
-  if (!s3Region) errors.push('S3_REGION is required');
-  if (!s3Endpoint) errors.push('S3_ENDPOINT is required');
-  if (!s3AccessKeyId)
-    errors.push('S3_ACCESS_KEY_ID is required');
-  if (!s3SecretAccessKey)
-    errors.push('S3_SECRET_ACCESS_KEY is required');
-  if (!s3BucketName) errors.push('S3_BUCKET_NAME is required');
+  if (!s3Region) errors.push("S3_REGION is required");
+  if (!s3Endpoint) errors.push("S3_ENDPOINT is required");
+  if (!s3AccessKeyId) errors.push("S3_ACCESS_KEY_ID is required");
+  if (!s3SecretAccessKey) errors.push("S3_SECRET_ACCESS_KEY is required");
+  if (!s3BucketName) errors.push("S3_BUCKET_NAME is required");
 
   // Check sensitive values aren't using defaults in production
   if (
-    nodeEnv === 'production' && (
-      s3AccessKeyId === 'devaccesskey' ||
-      s3SecretAccessKey === 'devsecretkey'
-    )
+    nodeEnv === "production" &&
+    (s3AccessKeyId === "devaccesskey" || s3SecretAccessKey === "devsecretkey")
   ) {
-    errors.push('S3 credentials must not use default development values in production');
+    errors.push("S3 credentials must not use default development values in production");
   }
 
   // Database configuration
-  const dbBackend = (process.env.DB_BACKEND || 'sqlite') as 'sqlite' | 'postgres';
-  if (dbBackend === 'postgres') {
+  const dbBackend = (process.env.DB_BACKEND || "sqlite") as "sqlite" | "postgres";
+  if (dbBackend === "postgres") {
     const databaseUrl = process.env.DATABASE_URL;
     if (!databaseUrl) {
-      errors.push('DATABASE_URL is required when DB_BACKEND=postgres');
-    } else if (!databaseUrl.startsWith('postgres://') && !databaseUrl.startsWith('postgresql://')) {
-      errors.push('DATABASE_URL must be a valid PostgreSQL connection string');
+      errors.push("DATABASE_URL is required when DB_BACKEND=postgres");
+    } else if (!databaseUrl.startsWith("postgres://") && !databaseUrl.startsWith("postgresql://")) {
+      errors.push("DATABASE_URL must be a valid PostgreSQL connection string");
     }
   }
 
   // Log level validation
-  const logLevel = process.env.LOG_LEVEL || 'info';
-  const validLogLevels = ['debug', 'info', 'warn', 'error', 'fatal'];
+  const logLevel = process.env.LOG_LEVEL || "info";
+  const validLogLevels = ["debug", "info", "warn", "error", "fatal"];
   if (!validLogLevels.includes(logLevel)) {
-    errors.push(`LOG_LEVEL must be one of: ${validLogLevels.join(', ')}`);
+    errors.push(`LOG_LEVEL must be one of: ${validLogLevels.join(", ")}`);
   }
 
   // Node environment validation
-  const validNodeEnvs = ['development', 'production', 'test'];
+  const validNodeEnvs = ["development", "production", "test"];
   if (!validNodeEnvs.includes(nodeEnv)) {
-    errors.push(`NODE_ENV must be one of: ${validNodeEnvs.join(', ')}`);
+    errors.push(`NODE_ENV must be one of: ${validNodeEnvs.join(", ")}`);
   }
 
   if (errors.length > 0) {
-    const message = `Environment validation failed:\n${errors.map((e) => `  - ${e}`).join('\n')}`;
+    const message = `Environment validation failed:\n${errors.map((e) => `  - ${e}`).join("\n")}`;
     throw new ValidationError(message);
   }
 
@@ -111,10 +108,10 @@ export function validateEnvironment(): EnvironmentConfig {
     : undefined;
 
   if (maxFileSize && isNaN(maxFileSize)) {
-    throw new ValidationError('MAX_FILE_SIZE must be a valid number');
+    throw new ValidationError("MAX_FILE_SIZE must be a valid number");
   }
   if (maxRequestSize && isNaN(maxRequestSize)) {
-    throw new ValidationError('MAX_REQUEST_SIZE must be a valid number');
+    throw new ValidationError("MAX_REQUEST_SIZE must be a valid number");
   }
 
   return {
@@ -138,7 +135,7 @@ export function validateEnvironment(): EnvironmentConfig {
  * Log which environment variables are loaded (without exposing values).
  */
 export function logEnvironmentStatus(config: EnvironmentConfig): void {
-  console.info('[ENV] Environment validation passed:');
+  console.info("[ENV] Environment validation passed:");
   console.info(`  - JWT_SECRET: configured (${config.jwtSecret.length} chars)`);
   console.info(`  - S3_REGION: ${config.s3Region}`);
   console.info(`  - S3_ENDPOINT: ${config.s3Endpoint}`);

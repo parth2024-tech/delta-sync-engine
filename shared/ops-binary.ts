@@ -64,9 +64,9 @@ export function decodeOpsBinaryV1(buf: Buffer): UploadOp[] {
     } else if (kind === OP_LITERAL) {
       if (p + 8 > buf.length) throw new Error("Truncated literal op");
       ops.push({
-        type:           "literal",
-        literalOffset:  buf.readUInt32LE(p),
-        literalLength:  buf.readUInt32LE(p + 4),
+        type: "literal",
+        literalOffset: buf.readUInt32LE(p),
+        literalLength: buf.readUInt32LE(p + 4),
       });
       p += 8;
     } else {
@@ -80,5 +80,9 @@ export function decodeOpsBinaryV1(buf: Buffer): UploadOp[] {
 /** Zod shape matches JSON ops (for mixed validation). */
 export const opSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("copy"), blockIndex: z.number().int().min(0) }),
-  z.object({ type: z.literal("literal"), literalOffset: z.number().int().min(0), literalLength: z.number().int().min(1) }),
+  z.object({
+    type: z.literal("literal"),
+    literalOffset: z.number().int().min(0),
+    literalLength: z.number().int().min(1),
+  }),
 ]);

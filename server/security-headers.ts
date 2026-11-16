@@ -29,9 +29,7 @@ const defaultCspDirectives = {
   "form-action": "'self'",
 };
 
-export function securityHeaders(
-  options: SecurityHeadersOptions = {},
-): Handler {
+export function securityHeaders(options: SecurityHeadersOptions = {}): Handler {
   const {
     enableHsts = process.env.NODE_ENV === "production",
     hstsMaxAge = 31536000,
@@ -61,14 +59,8 @@ export function securityHeaders(
     const origin = event.node.req.headers.origin;
     if (origin) {
       event.node.res.setHeader("Access-Control-Allow-Origin", origin);
-      event.node.res.setHeader(
-        "Access-Control-Allow-Methods",
-        "GET, POST, PUT, DELETE, OPTIONS",
-      );
-      event.node.res.setHeader(
-        "Access-Control-Allow-Headers",
-        "Content-Type, Authorization",
-      );
+      event.node.res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+      event.node.res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
       event.node.res.setHeader("Access-Control-Allow-Credentials", "true");
     }
   };

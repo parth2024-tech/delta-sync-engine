@@ -25,10 +25,7 @@ export interface NegotiationPayload {
 
 const NEGOTIATION_TTL_MS = 60 * 60 * 1000; // 1 hour (matches pre-signed URL expiry)
 
-export async function setNegotiation(
-  id: string,
-  payload: NegotiationPayload,
-): Promise<void> {
+export async function setNegotiation(id: string, payload: NegotiationPayload): Promise<void> {
   const expiresAt = new Date(Date.now() + NEGOTIATION_TTL_MS);
 
   // Pack chunks as binary format for efficient storage
@@ -55,14 +52,8 @@ export async function setNegotiation(
  * Read a negotiation without consuming it.
  * The negotiation remains valid for retries if commit fails.
  */
-export async function getNegotiation(
-  id: string,
-): Promise<NegotiationPayload | null> {
-  const entry = await db
-    .select()
-    .from(negotiations)
-    .where(eq(negotiations.id, id))
-    .get();
+export async function getNegotiation(id: string): Promise<NegotiationPayload | null> {
+  const entry = await db.select().from(negotiations).where(eq(negotiations.id, id)).get();
 
   if (!entry) return null;
 
@@ -97,9 +88,7 @@ export async function clearNegotiation(id: string): Promise<void> {
  * Legacy one-shot: read and clear in a single call.
  * @deprecated Use getNegotiation + clearNegotiation for resumable uploads.
  */
-export async function getAndClearNegotiation(
-  id: string,
-): Promise<NegotiationPayload | null> {
+export async function getAndClearNegotiation(id: string): Promise<NegotiationPayload | null> {
   const payload = await getNegotiation(id);
   if (payload) await clearNegotiation(id);
   return payload;
@@ -110,10 +99,7 @@ export async function getAndClearNegotiation(
  * Safe to call repeatedly - only deletes expired records.
  */
 export async function cleanupExpiredNegotiations(): Promise<number> {
-  const result = await db
-    .delete(negotiations)
-    .where(lt(negotiations.expiresAt, Date.now()))
-    .run();
+  const result = await db.delete(negotiations).where(lt(negotiations.expiresAt, Date.now())).run();
   return result.changes;
 }
 

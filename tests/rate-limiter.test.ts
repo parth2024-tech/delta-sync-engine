@@ -23,7 +23,9 @@ function createRateLimiter(maxRequests: number, windowMs = 60_000) {
       }
       return false;
     },
-    reset() { limits.clear(); },
+    reset() {
+      limits.clear();
+    },
   };
 }
 
@@ -44,7 +46,9 @@ function createByteQuota(maxBytes: number, windowMs = 60_000) {
       }
       return false;
     },
-    reset() { limits.clear(); },
+    reset() {
+      limits.clear();
+    },
   };
 }
 

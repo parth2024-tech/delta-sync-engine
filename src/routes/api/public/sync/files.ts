@@ -10,14 +10,27 @@ export const Route = createFileRoute("/api/public/sync/files")({
     handlers: {
       GET: async ({ request }) => {
         const userId = await validateApiKey(request.headers.get("Authorization"));
-        if (!userId) return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { "Content-Type": "application/json" } });
+        if (!userId)
+          return new Response(JSON.stringify({ error: "Unauthorized" }), {
+            status: 401,
+            headers: { "Content-Type": "application/json" },
+          });
 
-        const rows = await db.select({
-          id: files.id, path: files.path, totalSize: files.totalSize,
-          currentVersionId: files.currentVersionId, createdAt: files.createdAt,
-        }).from(files).where(eq(files.userId, userId)).orderBy(desc(files.createdAt));
+        const rows = await db
+          .select({
+            id: files.id,
+            path: files.path,
+            totalSize: files.totalSize,
+            currentVersionId: files.currentVersionId,
+            createdAt: files.createdAt,
+          })
+          .from(files)
+          .where(eq(files.userId, userId))
+          .orderBy(desc(files.createdAt));
 
-        return new Response(JSON.stringify(rows), { headers: { "Content-Type": "application/json" } });
+        return new Response(JSON.stringify(rows), {
+          headers: { "Content-Type": "application/json" },
+        });
       },
     },
   },

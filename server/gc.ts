@@ -14,7 +14,12 @@
  * Run: npx tsx --env-file=.env server/gc.ts
  */
 
-import { S3Client, ListObjectsV2Command, DeleteObjectsCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import {
+  S3Client,
+  ListObjectsV2Command,
+  DeleteObjectsCommand,
+  GetObjectCommand,
+} from "@aws-sdk/client-s3";
 import { db } from "./db";
 import { gcRuns, blocks, fileVersions } from "../shared/schema";
 import { decodeChunkManifestV1 } from "../shared/chunk-manifest";
@@ -84,7 +89,8 @@ export async function buildReferenceSet(): Promise<CompressedHashSet> {
   const BLOCK_PAGE = 5000;
   let blockOffset = 0;
   for (;;) {
-    const rows = await db.select({ strongHash: blocks.strongHash })
+    const rows = await db
+      .select({ strongHash: blocks.strongHash })
       .from(blocks)
       .limit(BLOCK_PAGE)
       .offset(blockOffset);
@@ -102,17 +108,20 @@ export async function buildReferenceSet(): Promise<CompressedHashSet> {
   const PAGE_SIZE = 80;
 
   for (;;) {
-    const rows = lastId === ""
-      ? await db.select({ id: fileVersions.id, chunkManifest: fileVersions.chunkManifest })
-          .from(fileVersions)
-          .where(isNotNull(fileVersions.chunkManifest))
-          .orderBy(asc(fileVersions.id))
-          .limit(PAGE_SIZE)
-      : await db.select({ id: fileVersions.id, chunkManifest: fileVersions.chunkManifest })
-          .from(fileVersions)
-          .where(gt(fileVersions.id, lastId))
-          .orderBy(asc(fileVersions.id))
-          .limit(PAGE_SIZE);
+    const rows =
+      lastId === ""
+        ? await db
+            .select({ id: fileVersions.id, chunkManifest: fileVersions.chunkManifest })
+            .from(fileVersions)
+            .where(isNotNull(fileVersions.chunkManifest))
+            .orderBy(asc(fileVersions.id))
+            .limit(PAGE_SIZE)
+        : await db
+            .select({ id: fileVersions.id, chunkManifest: fileVersions.chunkManifest })
+            .from(fileVersions)
+            .where(gt(fileVersions.id, lastId))
+            .orderBy(asc(fileVersions.id))
+            .limit(PAGE_SIZE);
 
     if (rows.length === 0) break;
 
@@ -135,7 +144,9 @@ export async function buildReferenceSet(): Promise<CompressedHashSet> {
     if (rows.length < PAGE_SIZE) break;
   }
 
-  console.log(`[GC] Phase 1b: Processed ${versionsSeen} version manifests → ${hashSet.size} total unique hashes`);
+  console.log(
+    `[GC] Phase 1b: Processed ${versionsSeen} version manifests → ${hashSet.size} total unique hashes`,
+  );
 
   return hashSet;
 }
@@ -143,7 +154,9 @@ export async function buildReferenceSet(): Promise<CompressedHashSet> {
 // ── Phase 2: Reconcile S3 against the reference set ───────────────────────────
 
 async function reconcileWithS3Listing(hashSet: CompressedHashSet): Promise<number> {
-  throw new Error("[GC] ListObjectsV2 is entirely disabled for scaling. S3 Inventory CSV reports must be used.");
+  throw new Error(
+    "[GC] ListObjectsV2 is entirely disabled for scaling. S3 Inventory CSV reports must be used.",
+  );
 }
 
 /**
@@ -151,17 +164,21 @@ async function reconcileWithS3Listing(hashSet: CompressedHashSet): Promise<numbe
  */
 async function reconcileWithInventory(hashSet: CompressedHashSet): Promise<number> {
   if (!INVENTORY_BUCKET || !INVENTORY_KEY) {
-    throw new Error("[GC] ListObjectsV2 is entirely disabled for scaling. S3 Inventory (INVENTORY_BUCKET & INVENTORY_KEY) must be configured to run GC.");
+    throw new Error(
+      "[GC] ListObjectsV2 is entirely disabled for scaling. S3 Inventory (INVENTORY_BUCKET & INVENTORY_KEY) must be configured to run GC.",
+    );
   }
 
   let deletedCount = 0;
   console.log(`[GC] Reading S3 Inventory from s3://${INVENTORY_BUCKET}/${INVENTORY_KEY}`);
 
   try {
-    const response = await s3.send(new GetObjectCommand({
-      Bucket: INVENTORY_BUCKET,
-      Key: INVENTORY_KEY,
-    }));
+    const response = await s3.send(
+      new GetObjectCommand({
+        Bucket: INVENTORY_BUCKET,
+        Key: INVENTORY_KEY,
+      }),
+    );
 
     const body = await response.Body?.transformToString();
     if (!body) {
@@ -189,14 +206,18 @@ async function reconcileWithInventory(hashSet: CompressedHashSet): Promise<numbe
     const DELETE_BATCH = 1000;
     for (let i = 0; i < orphanedKeys.length; i += DELETE_BATCH) {
       const batch = orphanedKeys.slice(i, i + DELETE_BATCH);
-      await s3.send(new DeleteObjectsCommand({
-        Bucket: BUCKET_NAME,
-        Delete: { Objects: batch.map((Key) => ({ Key: getS3Key(Key) })), Quiet: true },
-      }));
+      await s3.send(
+        new DeleteObjectsCommand({
+          Bucket: BUCKET_NAME,
+          Delete: { Objects: batch.map((Key) => ({ Key: getS3Key(Key) })), Quiet: true },
+        }),
+      );
       deletedCount += batch.length;
     }
 
-    console.log(`[GC] Inventory: processed ${lines.length} entries, deleted ${deletedCount} orphans`);
+    console.log(
+      `[GC] Inventory: processed ${lines.length} entries, deleted ${deletedCount} orphans`,
+    );
   } catch (err) {
     console.error("[GC] Failed to execute S3 Inventory GC:", err);
     throw err;
@@ -213,9 +234,12 @@ export async function runGarbageCollection() {
   console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
   // Track GC run
-  const [gcRun] = await db.insert(gcRuns).values({
-    status: "running",
-  }).returning();
+  const [gcRun] = await db
+    .insert(gcRuns)
+    .values({
+      status: "running",
+    })
+    .returning();
 
   const startTime = Date.now();
 
@@ -232,7 +256,8 @@ export async function runGarbageCollection() {
     const elapsedMs = Date.now() - startTime;
 
     // Update GC run record
-    await db.update(gcRuns)
+    await db
+      .update(gcRuns)
       .set({
         status: "completed",
         deletedCount,
@@ -241,14 +266,16 @@ export async function runGarbageCollection() {
       .where(eq(gcRuns.id, gcRun.id));
 
     console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    console.log(`GC completed in ${(elapsedMs / 1000).toFixed(1)}s — deleted ${deletedCount} orphaned objects`);
+    console.log(
+      `GC completed in ${(elapsedMs / 1000).toFixed(1)}s — deleted ${deletedCount} orphaned objects`,
+    );
     console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-
   } catch (e) {
     const elapsedMs = Date.now() - startTime;
     console.error(`[GC] Fatal error after ${(elapsedMs / 1000).toFixed(1)}s:`, e);
 
-    await db.update(gcRuns)
+    await db
+      .update(gcRuns)
       .set({
         status: "failed",
         error: String(e),
@@ -261,5 +288,7 @@ export async function runGarbageCollection() {
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  runGarbageCollection().catch(console.error).finally(() => process.exit(0));
+  runGarbageCollection()
+    .catch(console.error)
+    .finally(() => process.exit(0));
 }

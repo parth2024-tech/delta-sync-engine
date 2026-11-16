@@ -60,8 +60,5 @@ export function extractApiKeyPrefix(key: string): string {
  */
 export function verifyApiKey(key: string, storedHash: string): boolean {
   const hash = hashApiKey(key);
-  return crypto.timingSafeEqual(
-    Buffer.from(hash),
-    Buffer.from(storedHash),
-  );
+  return crypto.timingSafeEqual(Buffer.from(hash), Buffer.from(storedHash));
 }

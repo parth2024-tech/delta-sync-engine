@@ -84,8 +84,8 @@ async function benchFullUpload(
     transferBytes,
     timeMs: elapsed,
     peakMemMB,
-    timeSavedPct: "0.0%",  // baseline
-    bwSavedPct: "0.0%",    // baseline
+    timeSavedPct: "0.0%", // baseline
+    bwSavedPct: "0.0%", // baseline
   };
 }
 
@@ -157,13 +157,11 @@ async function benchCdcDelta(
 
 // ─── Run a Workload ───────────────────────────────────────────────────────────
 
-async function runWorkload(
-  name: string,
-  originalData: Buffer,
-  modifiedData: Buffer,
-) {
+async function runWorkload(name: string, originalData: Buffer, modifiedData: Buffer) {
   console.log(`\n━━━ Workload: ${name} ━━━`);
-  console.log(`  Original: ${fmtBytes(originalData.length)}  →  Modified: ${fmtBytes(modifiedData.length)}`);
+  console.log(
+    `  Original: ${fmtBytes(originalData.length)}  →  Modified: ${fmtBytes(modifiedData.length)}`,
+  );
 
   const full = await benchFullUpload(name, originalData, modifiedData);
   const fixed = await benchFixedDelta(name, originalData, modifiedData);
@@ -177,7 +175,9 @@ async function runWorkload(
 
   for (const r of [full, fixed, cdc]) {
     console.log(`  [${r.strategy}]`);
-    console.log(`    Transfer: ${fmtBytes(r.transferBytes)}  |  Time: ${fmtMs(r.timeMs)}  |  Mem: ${r.peakMemMB.toFixed(1)} MB`);
+    console.log(
+      `    Transfer: ${fmtBytes(r.transferBytes)}  |  Time: ${fmtMs(r.timeMs)}  |  Mem: ${r.peakMemMB.toFixed(1)} MB`,
+    );
     console.log(`    BW saved: ${r.bwSavedPct}  |  Time saved: ${r.timeSavedPct}`);
     results.push(r);
   }
@@ -284,9 +284,13 @@ async function main() {
   // ─── Output Results ─────────────────────────────────────────────────────────
 
   console.log("\n\n");
-  console.log("═══════════════════════════════════════════════════════════════════════════════════════════════════════════════");
+  console.log(
+    "═══════════════════════════════════════════════════════════════════════════════════════════════════════════════",
+  );
   console.log("  RESULTS SUMMARY");
-  console.log("═══════════════════════════════════════════════════════════════════════════════════════════════════════════════");
+  console.log(
+    "═══════════════════════════════════════════════════════════════════════════════════════════════════════════════",
+  );
 
   const header = [
     "Workload".padEnd(42),
