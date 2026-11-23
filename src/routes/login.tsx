@@ -38,7 +38,11 @@ function LoginPage() {
       }
       navigate({ to: "/dashboard" });
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
+      const message =
+        err instanceof Error
+          ? err.message
+          : (err as { message?: string })?.message || "Invalid credentials or request failed.";
+      setError(message);
     } finally {
       setLoading(false);
     }

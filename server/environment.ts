@@ -30,6 +30,15 @@ class ValidationError extends Error {
   }
 }
 
+// Ensure .env is loaded if running in Node without preloaded env flags
+if (!process.env.JWT_SECRET && typeof process.loadEnvFile === "function") {
+  try {
+    process.loadEnvFile();
+  } catch {
+    // .env may not exist in containers or CI environments
+  }
+}
+
 export function validateEnvironment(): EnvironmentConfig {
   const errors: string[] = [];
   const nodeEnv = process.env.NODE_ENV || "development";
