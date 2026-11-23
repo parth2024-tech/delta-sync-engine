@@ -7,7 +7,7 @@ import { eq, desc, sql, and, gte, count, like } from "drizzle-orm";
 import { verifySessionToken } from "../../server/auth";
 import { fetchBlock } from "../../server/block-store";
 import { loadVersionChunks } from "../../server/version-chunks";
-import { outboxNotifier } from "../../server/outbox-notifier";
+import { aggregateDailyTelemetry } from "./telemetry-aggregator";
 
 async function requireAuth() {
   const token = getCookie("ds_session");
@@ -38,26 +38,24 @@ export const getDashboardStats = createServerFn({ method: "GET" }).handler(async
     );
 
   const thirtyAgo = new Date(Date.now() - 30 * 86400000);
-  const dailySeries = await db
+  const syncRows = await db
     .select({
-      day: sql<string>`date(${syncJobs.startedAt} / 1000, 'unixepoch')`,
-      transferred: sql<number>`coalesce(sum(${syncJobs.bytesTransferred}), 0)`,
-      saved: sql<number>`coalesce(sum(${syncJobs.bytesSaved}), 0)`,
+      startedAt: syncJobs.startedAt,
+      bytesTransferred: syncJobs.bytesTransferred,
+      bytesSaved: syncJobs.bytesSaved,
     })
     .from(syncJobs)
     .where(and(eq(syncJobs.userId, userId), gte(syncJobs.startedAt, thirtyAgo)))
-    .groupBy(sql`date(${syncJobs.startedAt} / 1000, 'unixepoch')`)
-    .orderBy(sql`date(${syncJobs.startedAt} / 1000, 'unixepoch')`);
+    .orderBy(syncJobs.startedAt);
 
-  const dailyJobCounts = await db
-    .select({
-      day: sql<string>`date(${syncJobs.startedAt} / 1000, 'unixepoch')`,
-      count: count(),
-    })
-    .from(syncJobs)
-    .where(and(eq(syncJobs.userId, userId), gte(syncJobs.startedAt, thirtyAgo)))
-    .groupBy(sql`date(${syncJobs.startedAt} / 1000, 'unixepoch')`)
-    .orderBy(sql`date(${syncJobs.startedAt} / 1000, 'unixepoch')`);
+  const dailyBuckets = aggregateDailyTelemetry(
+    syncRows.map((r) => ({
+      createdAt: r.startedAt,
+      bytesTransferred: Number(r.bytesTransferred),
+      bytesSaved: Number(r.bytesSaved),
+    })),
+    30,
+  );
 
   const recentJobs = await db
     .select({
@@ -85,8 +83,8 @@ export const getDashboardStats = createServerFn({ method: "GET" }).handler(async
     totalBytesTransferred: transferred,
     transferRatio: ratio,
     activeIn24h: active,
-    dailySeries,
-    dailyJobCounts,
+    dailySeries: dailyBuckets,
+    dailyJobCounts: dailyBuckets.map((b) => ({ day: b.day, count: b.jobs })),
     recentJobs,
   };
 });
@@ -213,86 +211,8 @@ export const rollbackToVersion = createServerFn({ method: "POST" })
   .inputValidator(z.object({ fileId: z.string(), versionId: z.string() }))
   .handler(async ({ data }) => {
     const userId = await requireAuth();
-    const [file] = await db
-      .select()
-      .from(files)
-      .where(and(eq(files.id, data.fileId), eq(files.userId, userId)));
-    if (!file) throw new Error("File not found");
-
-    const [sourceVersion] = await db
-      .select()
-      .from(fileVersions)
-      .where(and(eq(fileVersions.id, data.versionId), eq(fileVersions.fileId, file.id)));
-    if (!sourceVersion) throw new Error("Source version not found");
-
-    const [latest] = await db
-      .select({ maxVer: sql<number>`max(${fileVersions.versionNo})` })
-      .from(fileVersions)
-      .where(eq(fileVersions.fileId, file.id));
-    const nextVer = (latest?.maxVer ?? 0) + 1;
-
-    const newVersionId = crypto.randomUUID();
-    await db.insert(fileVersions).values({
-      id: newVersionId,
-      fileId: file.id,
-      versionNo: nextVer,
-      size: sourceVersion.size,
-      totalBlocks: sourceVersion.totalBlocks,
-      blockSize: sourceVersion.blockSize,
-      chunkManifest: sourceVersion.chunkManifest,
-      chunkingMode: sourceVersion.chunkingMode,
-      contentSha256: sourceVersion.contentSha256,
-      verificationStatus: "verified",
-    });
-
-    await db
-      .update(files)
-      .set({
-        currentVersionId: newVersionId,
-        totalSize: sourceVersion.size,
-      })
-      .where(eq(files.id, file.id));
-
-    await db.insert(syncJobs).values({
-      userId,
-      fileId: file.id,
-      direction: "push",
-      bytesTransferred: 0,
-      bytesSaved: sourceVersion.size,
-      status: "done",
-      startedAt: new Date(),
-      finishedAt: new Date(),
-    });
-
-    await db.insert(outboxEvents).values({
-      eventType: "FILE_VERSION_CREATED",
-      aggregateId: newVersionId,
-      payload: JSON.stringify({
-        userId,
-        fileId: file.id,
-        versionId: newVersionId,
-        versionNo: nextVer,
-        path: file.path,
-        size: sourceVersion.size,
-        totalBlocks: sourceVersion.totalBlocks,
-        contentSha256: sourceVersion.contentSha256,
-        isRollback: true,
-      }),
-    });
-
-    outboxNotifier.emitInserted();
-    outboxNotifier.emitFileCommitted({
-      fileId: file.id,
-      path: file.path,
-      versionNo: nextVer,
-    });
-    outboxNotifier.emitJobUpdate({
-      jobId: `rollback-${newVersionId}`,
-      status: "done",
-      filePath: file.path,
-    });
-
-    return { newVersionNo: nextVer, newVersionId };
+    const { performRollbackToVersion } = await import("../../server/rollback");
+    return performRollbackToVersion(userId, data);
   });
 
 // Deprecated: web downloads are now streamed natively via /api/files/download

@@ -1,8 +1,9 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { z } from "zod";
 import { listFiles } from "@/lib/sync.functions";
+import type { WorkerOutputMessage } from "../../../workers/upload-worker";
 
 const fileSearchSchema = z.object({
   page: z.number().default(1).catch(1),
@@ -45,6 +46,15 @@ function FilesPage() {
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const workerRef = useRef<Worker | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (workerRef.current) {
+        workerRef.current.terminate();
+        workerRef.current = null;
+      }
+    };
+  }, []);
 
   const { data, isLoading, isFetching, refetch } = useQuery({
     queryKey: ["files", page, q],
@@ -94,10 +104,12 @@ function FilesPage() {
     const reader = new FileReader();
     reader.onload = () => {
       const arrayBuffer = reader.result as ArrayBuffer;
-      const worker = new Worker("/upload-worker.js");
+      const worker = new Worker(new URL("../../../workers/upload-worker.ts", import.meta.url), {
+        type: "module",
+      });
       workerRef.current = worker;
 
-      worker.onmessage = (e) => {
+      worker.onmessage = (e: MessageEvent<WorkerOutputMessage>) => {
         const msg = e.data;
         if (msg.type === "progress") {
           setUploadState((prev) =>
@@ -124,6 +136,8 @@ function FilesPage() {
                 }
               : null,
           );
+        } else if (msg.type === "error") {
+          setUploadState((prev) => (prev ? { ...prev, status: "error" } : null));
         }
       };
 
