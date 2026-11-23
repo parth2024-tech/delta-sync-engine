@@ -1,5 +1,6 @@
 import { createFileRoute, redirect, Outlet, Link, useNavigate } from "@tanstack/react-router";
 import { getSession, signOut } from "@/lib/auth.functions";
+import { useSSE } from "@/hooks/use-sse";
 
 export const Route = createFileRoute("/_authenticated")({
   beforeLoad: async () => {
@@ -13,6 +14,7 @@ export const Route = createFileRoute("/_authenticated")({
 function AuthLayout() {
   const { user } = Route.useRouteContext();
   const navigate = useNavigate();
+  useSSE();
 
   async function handleSignOut() {
     await signOut();

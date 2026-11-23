@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { getFileDetail, downloadVersion } from "@/lib/sync.functions";
+import { getFileDetail, rollbackToVersion } from "@/lib/sync.functions";
 
 export const Route = createFileRoute("/_authenticated/files/$fileId")({
   head: () => ({ meta: [{ title: "File Detail | Deltasync" }] }),
@@ -15,33 +15,66 @@ function fmt(bytes: number) {
   return `${bytes} B`;
 }
 
+interface BlockData {
+  blockIndex: number;
+  weakHash: number;
+  strongHash: string;
+  offset: number;
+  length: number;
+}
+
 function BlockHeatmap({
   blocks,
   prevStrongHashes,
+  blockSize,
 }: {
-  blocks: { blockIndex: number; strongHash: string }[];
+  blocks: BlockData[];
   prevStrongHashes: Set<string>;
+  blockSize: number;
 }) {
   if (blocks.length === 0) return null;
+
+  const total = blocks.length;
+  const reused = blocks.filter((b) => prevStrongHashes.has(b.strongHash)).length;
+  const newlyCreated = total - reused;
+  const dedupPct = total > 0 ? Math.round((reused / total) * 100) : 0;
+  const estimatedSaved = reused * blockSize;
+
   return (
-    <div className="flex flex-wrap gap-1 mt-2">
-      {blocks.map((b) => {
-        const reused = prevStrongHashes.has(b.strongHash);
-        return (
-          <div
-            key={b.blockIndex}
-            title={`Block ${b.blockIndex} (${reused ? "reused" : "new"})`}
-            className={`h-3 w-3 rounded-sm ${reused ? "bg-emerald-500/70" : "bg-amber-400/70"}`}
-          />
-        );
-      })}
-      <div className="w-full flex items-center gap-4 mt-1">
-        <span className="flex items-center gap-1 font-mono text-[10px] text-muted-foreground">
-          <span className="h-2 w-2 rounded-sm bg-emerald-500/70" /> reused
-        </span>
-        <span className="flex items-center gap-1 font-mono text-[10px] text-muted-foreground">
-          <span className="h-2 w-2 rounded-sm bg-amber-400/70" /> new
-        </span>
+    <div className="mt-4 space-y-2 border-t border-border/40 pt-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 font-mono text-xs">
+        <div className="flex items-center gap-3">
+          <span className="flex items-center gap-1.5 text-emerald-400">
+            <span className="h-2.5 w-2.5 rounded-sm bg-emerald-500/70" />
+            {reused} reused ({dedupPct}%)
+          </span>
+          <span className="flex items-center gap-1.5 text-amber-400">
+            <span className="h-2.5 w-2.5 rounded-sm bg-amber-400/70" />
+            {newlyCreated} new
+          </span>
+        </div>
+        {reused > 0 && (
+          <span className="text-muted-foreground">
+            Deduplicated: <strong className="text-foreground">{fmt(estimatedSaved)}</strong>
+          </span>
+        )}
+      </div>
+
+      <div className="flex flex-wrap gap-1 max-h-48 overflow-y-auto p-1 rounded bg-background/50 border border-border/30">
+        {blocks.map((b) => {
+          const isReused = prevStrongHashes.has(b.strongHash);
+          return (
+            <div
+              key={b.blockIndex}
+              title={`Block #${b.blockIndex} (${isReused ? "reused" : "new"})\nOffset: ${b.offset} | Len: ${b.length}B\nHash: ${b.strongHash.slice(0, 16)}…`}
+              className={`h-4 w-4 rounded-sm transition-transform hover:scale-125 cursor-help ${
+                isReused
+                  ? "bg-emerald-500/70 hover:bg-emerald-400"
+                  : "bg-amber-400/70 hover:bg-amber-300"
+              }`}
+            />
+          );
+        })}
       </div>
     </div>
   );
@@ -49,37 +82,28 @@ function BlockHeatmap({
 
 function FileDetail() {
   const { fileId } = Route.useParams();
-  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const qc = useQueryClient();
   const [copiedSha, setCopiedSha] = useState<string | null>(null);
+  const [confirmRollbackId, setConfirmRollbackId] = useState<string | null>(null);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["file-detail", fileId],
     queryFn: () => getFileDetail({ data: { fileId } }),
   });
 
-  async function handleDownload(vId: string, filename: string) {
-    setDownloadingId(vId);
-    try {
-      const result = await downloadVersion({ data: { fileId, versionId: vId } });
-      const binary = atob(result.data);
-      const len = binary.length;
-      const bytes = new Uint8Array(len);
-      for (let i = 0; i < len; i++) {
-        bytes[i] = binary.charCodeAt(i);
-      }
-      const blob = new Blob([bytes]);
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      console.error("Download failed:", err);
-      alert("Download failed. Check server logs.");
-    } finally {
-      setDownloadingId(null);
-    }
+  const rollbackMut = useMutation({
+    mutationFn: (versionId: string) => rollbackToVersion({ data: { fileId, versionId } }),
+    onSuccess: () => {
+      setConfirmRollbackId(null);
+      qc.invalidateQueries({ queryKey: ["file-detail", fileId] });
+      qc.invalidateQueries({ queryKey: ["files"] });
+      qc.invalidateQueries({ queryKey: ["sync-jobs"] });
+    },
+  });
+
+  function handleNativeDownload(versionId: string) {
+    const url = `/api/files/download?fileId=${encodeURIComponent(fileId)}&versionId=${encodeURIComponent(versionId)}`;
+    window.location.assign(url);
   }
 
   function copySha(sha: string, vId: string) {
@@ -139,30 +163,40 @@ function FileDetail() {
       </div>
 
       <h2 className="font-mono text-xs uppercase tracking-widest text-muted-foreground mb-4">
-        Version history
+        Version history & Chunk Diff Map
       </h2>
 
       <div className="relative border-l-2 border-border ml-3 space-y-6">
         {versionBlocks.map(({ version, blocks }, idx) => {
+          const isLatest = idx === 0;
           const prevHashes =
             idx < versionBlocks.length - 1
               ? new Set(versionBlocks[idx + 1].blocks.map((b) => b.strongHash))
               : new Set<string>();
 
-          const isDownloading = downloadingId === version.id;
-
           return (
             <div key={version.id} className="relative pl-6">
-              <div className="absolute -left-[9px] top-1 h-4 w-4 rounded-full border-2 border-primary bg-background" />
+              <div
+                className={`absolute -left-[9px] top-1 h-4 w-4 rounded-full border-2 ${
+                  isLatest ? "border-primary bg-primary" : "border-muted-foreground bg-background"
+                }`}
+              />
               <div className="rounded-lg border border-border bg-card/40 p-4">
-                <div className="flex items-start justify-between gap-4">
+                <div className="flex flex-wrap items-start justify-between gap-4">
                   <div>
-                    <span className="font-mono text-sm font-bold text-foreground">
-                      v{version.versionNo}
-                    </span>
-                    <span className="ml-3 font-mono text-xs text-muted-foreground">
-                      {fmt(Number(version.size))} · {version.totalBlocks} blocks · block size{" "}
-                      {version.blockSize}B
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-sm font-bold text-foreground">
+                        v{version.versionNo}
+                      </span>
+                      {isLatest && (
+                        <span className="rounded bg-primary/20 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-primary">
+                          latest
+                        </span>
+                      )}
+                    </div>
+                    <span className="font-mono text-xs text-muted-foreground">
+                      {fmt(Number(version.size))} · {version.totalBlocks} blocks ·{" "}
+                      {version.blockSize}B chunk size
                     </span>
                     <div className="mt-1 flex items-center gap-2">
                       <p className="font-mono text-[10px] text-muted-foreground/80 break-all">
@@ -176,15 +210,48 @@ function FileDetail() {
                       </button>
                     </div>
                   </div>
-                  <button
-                    disabled={isDownloading}
-                    onClick={() => handleDownload(version.id, file.path.split("/").pop() ?? "file")}
-                    className="shrink-0 rounded border border-border px-3 py-1 font-mono text-xs hover:bg-secondary disabled:opacity-50"
-                  >
-                    {isDownloading ? "↓ downloading…" : "↓ download"}
-                  </button>
+
+                  <div className="flex items-center gap-2">
+                    {!isLatest &&
+                      (confirmRollbackId === version.id ? (
+                        <div className="flex items-center gap-1 font-mono text-xs">
+                          <span className="text-amber-400">Restore?</span>
+                          <button
+                            disabled={rollbackMut.isPending}
+                            onClick={() => rollbackMut.mutate(version.id)}
+                            className="rounded bg-primary px-2 py-1 text-primary-foreground font-semibold hover:bg-primary/90"
+                          >
+                            {rollbackMut.isPending ? "…" : "Confirm"}
+                          </button>
+                          <button
+                            onClick={() => setConfirmRollbackId(null)}
+                            className="rounded border border-border px-2 py-1 hover:bg-secondary"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => setConfirmRollbackId(version.id)}
+                          className="rounded border border-border px-3 py-1 font-mono text-xs text-muted-foreground hover:bg-secondary hover:text-foreground"
+                        >
+                          ↺ Rollback to v{version.versionNo}
+                        </button>
+                      ))}
+                    <button
+                      onClick={() => handleNativeDownload(version.id)}
+                      className="rounded border border-border bg-card px-3 py-1 font-mono text-xs font-semibold text-primary hover:bg-secondary"
+                    >
+                      ↓ Stream Download
+                    </button>
+                  </div>
                 </div>
-                <BlockHeatmap blocks={blocks} prevStrongHashes={prevHashes} />
+
+                <BlockHeatmap
+                  blocks={blocks}
+                  prevStrongHashes={prevHashes}
+                  blockSize={version.blockSize}
+                />
               </div>
             </div>
           );

@@ -1,10 +1,17 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useState, Fragment } from "react";
+import { z } from "zod";
 import { listSyncJobs } from "@/lib/sync.functions";
+
+const jobSearchSchema = z.object({
+  page: z.number().default(1).catch(1),
+  status: z.enum(["all", "done", "error", "running"]).default("all").catch("all"),
+});
 
 export const Route = createFileRoute("/_authenticated/jobs")({
   head: () => ({ meta: [{ title: "Jobs | Deltasync" }] }),
+  validateSearch: jobSearchSchema,
   component: JobsPage,
 });
 
@@ -16,16 +23,27 @@ function fmt(bytes: number) {
 }
 
 function JobsPage() {
-  const [page, setPage] = useState(1);
+  const { page, status: statusParam } = Route.useSearch();
+  const navigate = useNavigate({ from: Route.fullPath });
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [statusFilter, setStatusFilter] = useState<"all" | "done" | "error" | "running">("all");
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const { data, isLoading, isFetching, refetch } = useQuery({
-    queryKey: ["sync-jobs", page],
-    queryFn: () => listSyncJobs({ data: { page, pageSize: 20 } }),
-    refetchInterval: 10000,
+    queryKey: ["sync-jobs", page, statusParam],
+    queryFn: () => listSyncJobs({ data: { page, pageSize: 20, status: statusParam } }),
   });
+
+  const jobs = data?.jobs ?? [];
+  const totalCount = data?.totalCount ?? 0;
+  const totalPages = Math.max(1, Math.ceil(totalCount / 20));
+
+  function setStatusFilter(s: "all" | "done" | "error" | "running") {
+    navigate({ search: { page: 1, status: s } });
+  }
+
+  function setPageNumber(p: number) {
+    navigate({ search: { page: p, status: statusParam } });
+  }
 
   function copyId(id: string, e: React.MouseEvent) {
     e.stopPropagation();
@@ -35,12 +53,6 @@ function JobsPage() {
     });
   }
 
-  const jobs = data ?? [];
-  const filtered = jobs.filter((j) => {
-    if (statusFilter === "all") return true;
-    return j.status === statusFilter;
-  });
-
   return (
     <div className="mx-auto max-w-7xl px-6 py-8">
       <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
@@ -48,7 +60,12 @@ function JobsPage() {
           <p className="mb-1 font-mono text-xs uppercase tracking-widest text-primary">
             // history
           </p>
-          <h1 className="text-3xl font-bold">Sync Jobs</h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-3xl font-bold">Sync Jobs</h1>
+            <span className="rounded-full bg-secondary px-2.5 py-0.5 font-mono text-xs text-muted-foreground">
+              {totalCount} total
+            </span>
+          </div>
         </div>
         <div className="flex items-center gap-3">
           <div className="flex rounded-md border border-border bg-card/40 p-0.5 text-xs font-mono">
@@ -57,7 +74,7 @@ function JobsPage() {
                 key={s}
                 onClick={() => setStatusFilter(s)}
                 className={`rounded px-2.5 py-1 uppercase tracking-wider transition-colors ${
-                  statusFilter === s
+                  statusParam === s
                     ? "bg-primary text-primary-foreground font-semibold"
                     : "text-muted-foreground hover:text-foreground"
                 }`}
@@ -85,10 +102,12 @@ function JobsPage() {
           <div className="flex items-center justify-center h-48">
             <span className="font-mono text-sm text-muted-foreground animate-pulse">loading…</span>
           </div>
-        ) : filtered.length === 0 ? (
+        ) : jobs.length === 0 ? (
           <div className="p-10 text-center">
             <p className="font-mono text-sm text-muted-foreground">
-              {jobs.length === 0 ? "No jobs yet." : `No jobs matching filter "${statusFilter}".`}
+              {statusParam === "all"
+                ? "No jobs recorded yet."
+                : `No jobs with status "${statusParam}".`}
             </p>
           </div>
         ) : (
@@ -109,7 +128,7 @@ function JobsPage() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((j) => {
+                {jobs.map((j) => {
                   const isExp = expanded === j.id;
                   return (
                     <Fragment key={j.id}>
@@ -214,22 +233,26 @@ function JobsPage() {
         )}
       </div>
 
-      <div className="mt-4 flex items-center gap-3">
-        <button
-          disabled={page <= 1}
-          onClick={() => setPage((p) => p - 1)}
-          className="rounded border border-border px-3 py-1 font-mono text-xs disabled:opacity-40 hover:bg-secondary"
-        >
-          ← prev
-        </button>
-        <span className="font-mono text-xs text-muted-foreground">page {page}</span>
-        <button
-          disabled={(data ?? []).length < 20}
-          onClick={() => setPage((p) => p + 1)}
-          className="rounded border border-border px-3 py-1 font-mono text-xs disabled:opacity-40 hover:bg-secondary"
-        >
-          next →
-        </button>
+      <div className="mt-4 flex items-center justify-between font-mono text-xs">
+        <span className="text-muted-foreground">
+          Page {page} of {totalPages} ({totalCount} total jobs)
+        </span>
+        <div className="flex items-center gap-2">
+          <button
+            disabled={page <= 1}
+            onClick={() => setPageNumber(page - 1)}
+            className="rounded border border-border px-3 py-1 disabled:opacity-40 hover:bg-secondary"
+          >
+            ← prev
+          </button>
+          <button
+            disabled={page >= totalPages}
+            onClick={() => setPageNumber(page + 1)}
+            className="rounded border border-border px-3 py-1 disabled:opacity-40 hover:bg-secondary"
+          >
+            next →
+          </button>
+        </div>
       </div>
     </div>
   );

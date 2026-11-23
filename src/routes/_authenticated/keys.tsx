@@ -19,7 +19,6 @@ function KeysPage() {
   const { data, isLoading, isFetching, refetch } = useQuery({
     queryKey: ["api-keys"],
     queryFn: () => listApiKeys(),
-    refetchInterval: 10000,
   });
 
   const createMut = useMutation({

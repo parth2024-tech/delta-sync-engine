@@ -211,7 +211,18 @@ export const Route = createFileRoute("/api/public/sync/commit")({
                   .where(and(eq(files.userId, userId), eq(files.path, negotiation.path)))
               )[0]?.id
             : undefined;
+
         if (committedFileId) {
+          outboxNotifier.emitFileCommitted({
+            fileId: committedFileId,
+            path: negotiation.path,
+            versionNo: returnVal.versionNo,
+          });
+          outboxNotifier.emitJobUpdate({
+            jobId: body.negotiationId,
+            status: "done",
+            filePath: negotiation.path,
+          });
           void pruneFileVersions(committedFileId).catch((err) =>
             console.error("[Pruner] Error:", err),
           );

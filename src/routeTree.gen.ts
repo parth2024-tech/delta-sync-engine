@@ -18,10 +18,12 @@ import { Route as DocsRouteImport } from './routes/docs'
 import { Route as AuthenticatedRouteImport } from './routes/_authenticated'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiHealthRouteImport } from './routes/api/health'
+import { Route as ApiEventsRouteImport } from './routes/api/events'
 import { Route as AuthenticatedKeysRouteImport } from './routes/_authenticated/keys'
 import { Route as AuthenticatedJobsRouteImport } from './routes/_authenticated/jobs'
 import { Route as AuthenticatedDashboardRouteImport } from './routes/_authenticated/dashboard'
 import { Route as AuthenticatedFilesIndexRouteImport } from './routes/_authenticated/files/index'
+import { Route as ApiFilesDownloadRouteImport } from './routes/api/files/download'
 import { Route as AuthenticatedFilesFileIdRouteImport } from './routes/_authenticated/files/$fileId'
 import { Route as ApiPublicSyncUploadRouteImport } from './routes/api/public/sync/upload'
 import { Route as ApiPublicSyncSignaturesRouteImport } from './routes/api/public/sync/signatures'
@@ -77,6 +79,11 @@ const ApiHealthRoute = ApiHealthRouteImport.update({
   path: '/api/health',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiEventsRoute = ApiEventsRouteImport.update({
+  id: '/api/events',
+  path: '/api/events',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AuthenticatedKeysRoute = AuthenticatedKeysRouteImport.update({
   id: '/keys',
   path: '/keys',
@@ -96,6 +103,11 @@ const AuthenticatedFilesIndexRoute = AuthenticatedFilesIndexRouteImport.update({
   id: '/files/',
   path: '/files/',
   getParentRoute: () => AuthenticatedRoute,
+} as any)
+const ApiFilesDownloadRoute = ApiFilesDownloadRouteImport.update({
+  id: '/api/files/download',
+  path: '/api/files/download',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const AuthenticatedFilesFileIdRoute =
   AuthenticatedFilesFileIdRouteImport.update({
@@ -160,8 +172,10 @@ export interface FileRoutesByFullPath {
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/jobs': typeof AuthenticatedJobsRoute
   '/keys': typeof AuthenticatedKeysRoute
+  '/api/events': typeof ApiEventsRoute
   '/api/health': typeof ApiHealthRoute
   '/files/$fileId': typeof AuthenticatedFilesFileIdRoute
+  '/api/files/download': typeof ApiFilesDownloadRoute
   '/files/': typeof AuthenticatedFilesIndexRoute
   '/api/public/storage/upload': typeof ApiPublicStorageUploadRoute
   '/api/public/sync/commit': typeof ApiPublicSyncCommitRoute
@@ -184,8 +198,10 @@ export interface FileRoutesByTo {
   '/dashboard': typeof AuthenticatedDashboardRoute
   '/jobs': typeof AuthenticatedJobsRoute
   '/keys': typeof AuthenticatedKeysRoute
+  '/api/events': typeof ApiEventsRoute
   '/api/health': typeof ApiHealthRoute
   '/files/$fileId': typeof AuthenticatedFilesFileIdRoute
+  '/api/files/download': typeof ApiFilesDownloadRoute
   '/files': typeof AuthenticatedFilesIndexRoute
   '/api/public/storage/upload': typeof ApiPublicStorageUploadRoute
   '/api/public/sync/commit': typeof ApiPublicSyncCommitRoute
@@ -210,8 +226,10 @@ export interface FileRoutesById {
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
   '/_authenticated/jobs': typeof AuthenticatedJobsRoute
   '/_authenticated/keys': typeof AuthenticatedKeysRoute
+  '/api/events': typeof ApiEventsRoute
   '/api/health': typeof ApiHealthRoute
   '/_authenticated/files/$fileId': typeof AuthenticatedFilesFileIdRoute
+  '/api/files/download': typeof ApiFilesDownloadRoute
   '/_authenticated/files/': typeof AuthenticatedFilesIndexRoute
   '/api/public/storage/upload': typeof ApiPublicStorageUploadRoute
   '/api/public/sync/commit': typeof ApiPublicSyncCommitRoute
@@ -236,8 +254,10 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/jobs'
     | '/keys'
+    | '/api/events'
     | '/api/health'
     | '/files/$fileId'
+    | '/api/files/download'
     | '/files/'
     | '/api/public/storage/upload'
     | '/api/public/sync/commit'
@@ -260,8 +280,10 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/jobs'
     | '/keys'
+    | '/api/events'
     | '/api/health'
     | '/files/$fileId'
+    | '/api/files/download'
     | '/files'
     | '/api/public/storage/upload'
     | '/api/public/sync/commit'
@@ -285,8 +307,10 @@ export interface FileRouteTypes {
     | '/_authenticated/dashboard'
     | '/_authenticated/jobs'
     | '/_authenticated/keys'
+    | '/api/events'
     | '/api/health'
     | '/_authenticated/files/$fileId'
+    | '/api/files/download'
     | '/_authenticated/files/'
     | '/api/public/storage/upload'
     | '/api/public/sync/commit'
@@ -308,7 +332,9 @@ export interface RootRouteChildren {
   PrivacyRoute: typeof PrivacyRoute
   SitemapDotxmlRoute: typeof SitemapDotxmlRoute
   TermsRoute: typeof TermsRoute
+  ApiEventsRoute: typeof ApiEventsRoute
   ApiHealthRoute: typeof ApiHealthRoute
+  ApiFilesDownloadRoute: typeof ApiFilesDownloadRoute
   ApiPublicStorageUploadRoute: typeof ApiPublicStorageUploadRoute
   ApiPublicSyncCommitRoute: typeof ApiPublicSyncCommitRoute
   ApiPublicSyncDownloadRoute: typeof ApiPublicSyncDownloadRoute
@@ -385,6 +411,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiHealthRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/events': {
+      id: '/api/events'
+      path: '/api/events'
+      fullPath: '/api/events'
+      preLoaderRoute: typeof ApiEventsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_authenticated/keys': {
       id: '/_authenticated/keys'
       path: '/keys'
@@ -412,6 +445,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/files/'
       preLoaderRoute: typeof AuthenticatedFilesIndexRouteImport
       parentRoute: typeof AuthenticatedRoute
+    }
+    '/api/files/download': {
+      id: '/api/files/download'
+      path: '/api/files/download'
+      fullPath: '/api/files/download'
+      preLoaderRoute: typeof ApiFilesDownloadRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/_authenticated/files/$fileId': {
       id: '/_authenticated/files/$fileId'
@@ -515,7 +555,9 @@ const rootRouteChildren: RootRouteChildren = {
   PrivacyRoute: PrivacyRoute,
   SitemapDotxmlRoute: SitemapDotxmlRoute,
   TermsRoute: TermsRoute,
+  ApiEventsRoute: ApiEventsRoute,
   ApiHealthRoute: ApiHealthRoute,
+  ApiFilesDownloadRoute: ApiFilesDownloadRoute,
   ApiPublicStorageUploadRoute: ApiPublicStorageUploadRoute,
   ApiPublicSyncCommitRoute: ApiPublicSyncCommitRoute,
   ApiPublicSyncDownloadRoute: ApiPublicSyncDownloadRoute,

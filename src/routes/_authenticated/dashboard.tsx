@@ -1,9 +1,12 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import { getDashboardStats } from "@/lib/sync.functions";
 import {
   AreaChart,
   Area,
+  BarChart,
+  Bar,
   XAxis,
   YAxis,
   Tooltip,
@@ -36,10 +39,11 @@ function KpiCard({ label, value, sub }: { label: string; value: string; sub?: st
 }
 
 function Dashboard() {
+  const [timeRange, setTimeRange] = useState<"7d" | "30d">("30d");
+
   const { data, isLoading, isFetching, error, refetch } = useQuery({
     queryKey: ["dashboard-stats"],
     queryFn: () => getDashboardStats(),
-    refetchInterval: 10000,
   });
 
   if (isLoading)
@@ -68,11 +72,27 @@ function Dashboard() {
       </PageShell>
     );
 
-  const series = (data?.dailySeries ?? []).map((d) => ({
+  const rawSeries = (data?.dailySeries ?? []).map((d) => ({
     day: d.day?.slice(0, 10) ?? "",
     transferred: Number(d.transferred),
     saved: Number(d.saved),
   }));
+
+  const rawCounts = (data?.dailyJobCounts ?? []).map((d) => ({
+    day: d.day?.slice(0, 10) ?? "",
+    count: Number(d.count),
+  }));
+
+  const cutoff = new Date();
+  if (timeRange === "7d") {
+    cutoff.setDate(cutoff.getDate() - 7);
+  } else {
+    cutoff.setDate(cutoff.getDate() - 30);
+  }
+  const cutoffStr = cutoff.toISOString().slice(0, 10);
+
+  const series = rawSeries.filter((d) => d.day >= cutoffStr);
+  const counts = rawCounts.filter((d) => d.day >= cutoffStr);
 
   const isEmpty = (data?.totalFiles ?? 0) === 0;
 
@@ -87,69 +107,143 @@ function Dashboard() {
           value={`${data?.transferRatio ?? 0}%`}
           sub="bytes saved vs total"
         />
-        <KpiCard label="Active (24 h)" value={String(data?.activeIn24h ?? 0)} sub="sync jobs" />
+        <KpiCard label="Active (24 h)" value={String(data?.activeIn24h ?? 0)} sub="sync sessions" />
       </div>
 
-      {/* Chart */}
-      <div className="mt-6 rounded-lg border border-border bg-card/40 p-5">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="font-mono text-xs uppercase tracking-widest text-muted-foreground">
-            30-day bandwidth
-          </h2>
-          <div className="flex items-center gap-4 text-xs font-mono">
-            <span className="flex items-center gap-1.5">
-              <span className="h-2 w-2 rounded-full bg-cyan-400" />
-              transferred
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="h-2 w-2 rounded-full bg-amber-400" />
-              saved
-            </span>
-          </div>
+      {/* Time Range Switcher Header */}
+      <div className="mt-8 flex items-center justify-between">
+        <h2 className="font-mono text-sm font-semibold tracking-wide text-foreground">
+          Telemetry & Bandwidth Trends
+        </h2>
+        <div className="flex rounded-md border border-border bg-card/40 p-0.5 text-xs font-mono">
+          <button
+            onClick={() => setTimeRange("7d")}
+            className={`rounded px-3 py-1 transition-colors ${
+              timeRange === "7d"
+                ? "bg-primary text-primary-foreground font-semibold"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            7 Days
+          </button>
+          <button
+            onClick={() => setTimeRange("30d")}
+            className={`rounded px-3 py-1 transition-colors ${
+              timeRange === "30d"
+                ? "bg-primary text-primary-foreground font-semibold"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            30 Days
+          </button>
         </div>
-        {series.length === 0 ? (
-          <div className="h-48 flex items-center justify-center text-sm text-muted-foreground font-mono">
-            no data yet
+      </div>
+
+      {/* Grid of 2 Time-Series Charts */}
+      <div className="mt-4 grid gap-6 lg:grid-cols-2">
+        {/* Bandwidth Savings Area Chart */}
+        <div className="rounded-lg border border-border bg-card/40 p-5">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="font-mono text-xs uppercase tracking-widest text-muted-foreground">
+                Bandwidth Volume
+              </h3>
+              <p className="mt-0.5 text-xs text-muted-foreground/80">Transferred vs Saved</p>
+            </div>
+            <div className="flex items-center gap-4 text-xs font-mono">
+              <span className="flex items-center gap-1.5">
+                <span className="h-2 w-2 rounded-full bg-cyan-400" />
+                transferred
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="h-2 w-2 rounded-full bg-amber-400" />
+                saved
+              </span>
+            </div>
           </div>
-        ) : (
-          <ResponsiveContainer width="100%" height={200}>
-            <AreaChart data={series} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-              <XAxis
-                dataKey="day"
-                tick={{ fontSize: 10, fontFamily: "monospace" }}
-                tickFormatter={(v) => v.slice(5)}
-              />
-              <YAxis
-                tick={{ fontSize: 10, fontFamily: "monospace" }}
-                tickFormatter={(v) => fmt(v)}
-                width={60}
-              />
-              <Tooltip
-                formatter={(v: number) => fmt(v)}
-                labelStyle={{ fontFamily: "monospace", fontSize: 11 }}
-              />
-              <Area
-                type="monotone"
-                dataKey="transferred"
-                stroke="#22d3ee"
-                fill="#22d3ee22"
-                strokeWidth={2}
-              />
-              <Area
-                type="monotone"
-                dataKey="saved"
-                stroke="#fbbf24"
-                fill="#fbbf2422"
-                strokeWidth={2}
-              />
-            </AreaChart>
-          </ResponsiveContainer>
-        )}
+          {series.length === 0 ? (
+            <div className="h-48 flex items-center justify-center text-sm text-muted-foreground font-mono">
+              no data in this range
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={220}>
+              <AreaChart data={series} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                <XAxis
+                  dataKey="day"
+                  tick={{ fontSize: 10, fontFamily: "monospace" }}
+                  tickFormatter={(v) => v.slice(5)}
+                />
+                <YAxis
+                  tick={{ fontSize: 10, fontFamily: "monospace" }}
+                  tickFormatter={(v) => fmt(v)}
+                  width={60}
+                />
+                <Tooltip
+                  formatter={(v: number) => fmt(v)}
+                  labelStyle={{ fontFamily: "monospace", fontSize: 11 }}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="transferred"
+                  stroke="#22d3ee"
+                  fill="#22d3ee22"
+                  strokeWidth={2}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="saved"
+                  stroke="#fbbf24"
+                  fill="#fbbf2422"
+                  strokeWidth={2}
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+
+        {/* Daily Sync Volume Bar Chart */}
+        <div className="rounded-lg border border-border bg-card/40 p-5">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="font-mono text-xs uppercase tracking-widest text-muted-foreground">
+                Daily Sync Volume
+              </h3>
+              <p className="mt-0.5 text-xs text-muted-foreground/80">Completed jobs per day</p>
+            </div>
+            <span className="font-mono text-xs text-emerald-400 flex items-center gap-1.5">
+              <span className="h-2 w-2 rounded-full bg-emerald-400" />
+              job count
+            </span>
+          </div>
+          {counts.length === 0 ? (
+            <div className="h-48 flex items-center justify-center text-sm text-muted-foreground font-mono">
+              no data in this range
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={counts} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                <XAxis
+                  dataKey="day"
+                  tick={{ fontSize: 10, fontFamily: "monospace" }}
+                  tickFormatter={(v) => v.slice(5)}
+                />
+                <YAxis
+                  tick={{ fontSize: 10, fontFamily: "monospace" }}
+                  allowDecimals={false}
+                  width={40}
+                />
+                <Tooltip labelStyle={{ fontFamily: "monospace", fontSize: 11 }} />
+                <Bar dataKey="count" fill="#34d399" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </div>
       </div>
 
       {/* Recent jobs */}
-      <div className="mt-6 rounded-lg border border-border bg-card/40">
+      <div className="mt-8 rounded-lg border border-border bg-card/40">
         <div className="px-5 py-4 border-b border-border flex items-center justify-between">
           <h2 className="font-mono text-xs uppercase tracking-widest text-muted-foreground">
             Recent jobs
@@ -193,7 +287,9 @@ function Dashboard() {
                         {j.filePath || "untitled"}
                       </Link>
                     </td>
-                    <td className="px-4 py-3 font-mono text-xs">{j.direction}</td>
+                    <td className="px-4 py-3 font-mono text-xs uppercase text-muted-foreground">
+                      {j.direction}
+                    </td>
                     <td className="px-4 py-3 font-mono text-xs">
                       {fmt(Number(j.bytesTransferred))}
                     </td>
