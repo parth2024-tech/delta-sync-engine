@@ -61,7 +61,28 @@ function AuthLayout() {
           </div>
         </div>
       </header>
-      <Outlet />
+      <main className="flex-1">
+        <Outlet />
+      </main>
+      <footer className="border-t border-border bg-card/10 mt-12">
+        <div className="mx-auto max-w-7xl px-6 py-6 flex flex-wrap items-center justify-between gap-4 font-mono text-xs text-muted-foreground">
+          <div>deltasync engine v0.1 · session active</div>
+          <div className="flex items-center gap-4">
+            <Link to="/playground" className="hover:text-foreground">
+              Playground
+            </Link>
+            <Link to="/docs" className="hover:text-foreground">
+              Docs
+            </Link>
+            <Link to="/privacy" className="hover:text-foreground">
+              Privacy
+            </Link>
+            <Link to="/terms" className="hover:text-foreground">
+              Terms
+            </Link>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }

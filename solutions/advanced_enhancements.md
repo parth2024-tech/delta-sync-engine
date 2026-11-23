@@ -25,6 +25,7 @@
 ## 1. End-to-End Distributed Tracing & Observability (OpenTelemetry)
 
 ### 1.1 Architecture & Header Propagation
+
 The synchronization pipeline spans local disk I/O, hash computation, HTTP network handshakes, S3 object storage transfers, and asynchronous worker thread pools. We standardize on **W3C Trace Context (`traceparent`)** across all boundaries.
 
 ```
@@ -40,7 +41,9 @@ CLI Client Span (deltasync.push)
 ```
 
 ### 1.2 CLI Trace Context Injector
+
 #### File: `cli/src/telemetry.ts`
+
 ```typescript
 import crypto from "node:crypto";
 
@@ -72,7 +75,9 @@ export function parseTraceparent(header: string | null): TraceContext | null {
 ```
 
 ### 1.3 Wire-Level Trace Injection
+
 In [`cli/src/api.ts`](file:///home/thor/Downloads/delta-sync-engine-main/cli/src/api.ts), automatically attach `traceparent` to all requests:
+
 ```typescript
 import { formatTraceparent, generateTraceContext, TraceContext } from "./telemetry.js";
 
@@ -95,9 +100,11 @@ export async function fetchWithTimeout(
 ## 2. Client-Side Resumable Checkpointing & Delta Journaling
 
 ### 2.1 The Problem
+
 When syncing large directory trees or multi-gigabyte datasets, unexpected interruptions (power failure, network drop, SIGINT) require the CLI to restart directory traversal, re-hashing all local files and re-negotiating.
 
 ### 2.2 Relational State Machine Schema
+
 Add state machine tables to the local SQLite database ([`cli/src/db.ts`](file:///home/thor/Downloads/delta-sync-engine-main/cli/src/db.ts)):
 
 ```sql
@@ -132,17 +139,22 @@ CREATE INDEX IF NOT EXISTS idx_session_files_state ON sync_session_files(session
 ```
 
 ### 2.3 Resumption Lifecycle Controller
+
 ```typescript
 export class SessionCheckpointEngine {
   constructor(private db: Database) {}
 
   /** Create or restore existing unfinished sync session */
   public getOrCreateActiveSession(rootPath: string): { sessionId: string; isResume: boolean } {
-    const existing = this.db.prepare(`
+    const existing = this.db
+      .prepare(
+        `
       SELECT session_id FROM sync_sessions
       WHERE root_path = ? AND state NOT IN ('completed', 'aborted')
       ORDER BY updated_at DESC LIMIT 1
-    `).get(rootPath) as { session_id: string } | undefined;
+    `,
+      )
+      .get(rootPath) as { session_id: string } | undefined;
 
     if (existing) {
       return { sessionId: existing.session_id, isResume: true };
@@ -150,24 +162,44 @@ export class SessionCheckpointEngine {
 
     const sessionId = crypto.randomUUID();
     const now = Date.now();
-    this.db.prepare(`
+    this.db
+      .prepare(
+        `
       INSERT INTO sync_sessions (session_id, root_path, state, created_at, updated_at)
       VALUES (?, ?, 'discovered', ?, ?)
-    `).run(sessionId, rootPath, now, now);
+    `,
+      )
+      .run(sessionId, rootPath, now, now);
 
     return { sessionId, isResume: false };
   }
 
   /** Advance a file through the state machine atomically */
-  public transitionFile(sessionId: string, filePath: string, state: string, metadata?: { hash?: string; negotiationId?: string }) {
-    this.db.prepare(`
+  public transitionFile(
+    sessionId: string,
+    filePath: string,
+    state: string,
+    metadata?: { hash?: string; negotiationId?: string },
+  ) {
+    this.db
+      .prepare(
+        `
       UPDATE sync_session_files
       SET state = ?,
           content_hash = COALESCE(?, content_hash),
           negotiation_id = COALESCE(?, negotiation_id),
           updated_at = ?
       WHERE session_id = ? AND file_path = ?
-    `).run(state, metadata?.hash ?? null, metadata?.negotiationId ?? null, Date.now(), sessionId, filePath);
+    `,
+      )
+      .run(
+        state,
+        metadata?.hash ?? null,
+        metadata?.negotiationId ?? null,
+        Date.now(),
+        sessionId,
+        filePath,
+      );
   }
 }
 ```
@@ -177,10 +209,13 @@ export class SessionCheckpointEngine {
 ## 3. Client-Side Adaptive Bandwidth Shaping (Token Bucket)
 
 ### 3.1 Rate Limiting Architecture
+
 Uncontrolled parallel chunk streaming saturates egress uplinks and starves local applications. We implement a **thread-safe Token Bucket Rate Limiter** that throttles byte throughput before feeding HTTP request bodies.
 
 ### 3.2 Implementation
+
 #### File: `cli/src/bandwidth-shaper.ts`
+
 ```typescript
 export class TokenBucketLimiter {
   private capacity: number;
@@ -199,7 +234,10 @@ export class TokenBucketLimiter {
   private refill() {
     const now = Date.now();
     const elapsedSeconds = (now - this.lastRefillTimestamp) / 1000;
-    this.tokens = Math.min(this.capacity, this.tokens + elapsedSeconds * this.refillRateBytesPerSec);
+    this.tokens = Math.min(
+      this.capacity,
+      this.tokens + elapsedSeconds * this.refillRateBytesPerSec,
+    );
     this.lastRefillTimestamp = now;
   }
 
@@ -227,7 +265,9 @@ export class TokenBucketLimiter {
 ```
 
 ### 3.3 Integration with CLI Push Pipeline
+
 In [`cli/src/push.ts`](file:///home/thor/Downloads/delta-sync-engine-main/cli/src/push.ts#L184):
+
 ```typescript
 // Throttle outbound bytes against token bucket prior to dispatching HTTP PUT
 await bandwidthLimiter.consume(chunk.length);
@@ -237,9 +277,9 @@ const r = await fetchWithTimeout(
   {
     method: "PUT",
     body: chunkData,
-    headers: { "Content-Type": "application/octet-stream", "Content-Length": String(chunk.length) }
+    headers: { "Content-Type": "application/octet-stream", "Content-Length": String(chunk.length) },
   },
-  30000
+  30000,
 );
 ```
 
@@ -248,6 +288,7 @@ const r = await fetchWithTimeout(
 ## 4. CAS Generational Mark-Sweep & Reference Counting GC
 
 ### 4.1 The Architecture
+
 Instead of batch-scanning multi-million object S3 buckets or parsing large inventory CSV files in Node.js memory, CAS management is moved to an **asynchronous transactional reference counter** in PostgreSQL/SQLite.
 
 ```
@@ -258,19 +299,27 @@ Instead of batch-scanning multi-million object S3 buckets or parsing large inven
 ```
 
 ### 4.2 Database Schema
+
 #### File: `shared/schema.ts`
+
 ```typescript
 export const casBlockIndex = sqliteTable("cas_block_index", {
   strongHash: text("strong_hash").primaryKey(), // SHA-256
   refCount: integer("ref_count").notNull().default(1),
   byteSize: integer("byte_size").notNull(),
-  firstSeenAt: integer("first_seen_at", { mode: "timestamp_ms" }).$defaultFn(() => new Date()).notNull(),
-  lastReferencedAt: integer("last_referenced_at", { mode: "timestamp_ms" }).$defaultFn(() => new Date()).notNull(),
+  firstSeenAt: integer("first_seen_at", { mode: "timestamp_ms" })
+    .$defaultFn(() => new Date())
+    .notNull(),
+  lastReferencedAt: integer("last_referenced_at", { mode: "timestamp_ms" })
+    .$defaultFn(() => new Date())
+    .notNull(),
 });
 ```
 
 ### 4.3 Atomic Ref-Count Sweeper
+
 #### File: `server/cas-lifecycle.ts`
+
 ```typescript
 import { db } from "./db.js";
 import { casBlockIndex } from "../shared/schema.js";
@@ -281,7 +330,9 @@ const GRACE_PERIOD_MS = 24 * 60 * 60 * 1000; // 24-hour quarantine before physic
 
 export class CasLifecycleManager {
   /** Increments ref_counts for newly committed version chunks */
-  public static async registerReferences(hashesWithSizes: { hash: string; size: number }[]): Promise<void> {
+  public static async registerReferences(
+    hashesWithSizes: { hash: string; size: number }[],
+  ): Promise<void> {
     await db.transaction(async (tx) => {
       for (const { hash, size } of hashesWithSizes) {
         await tx
@@ -326,12 +377,7 @@ export class CasLifecycleManager {
     const candidateRows = await db
       .select()
       .from(casBlockIndex)
-      .where(
-        and(
-          lte(casBlockIndex.refCount, 0),
-          lte(casBlockIndex.lastReferencedAt, cutoff)
-        )
-      )
+      .where(and(lte(casBlockIndex.refCount, 0), lte(casBlockIndex.lastReferencedAt, cutoff)))
       .limit(1000);
 
     if (candidateRows.length === 0) return 0;
@@ -357,6 +403,7 @@ export class CasLifecycleManager {
 ## 5. Binary Framing & HTTP/2 Multiplexing Upgrade
 
 ### 5.1 The Architecture
+
 Individual HTTP PUT requests incur TCP slow-start and TLS record negotiation penalties on each chunk upload. Under high-latency WAN links, streaming missing chunks over a **single multiplexed HTTP/2 or WebSocket binary framed session** reduces upload completion times by $3\times$ to $5\times$.
 
 ```
@@ -370,6 +417,7 @@ CLI Client (HTTP/2 Multiplexed Session)
 ```
 
 ### 5.2 Binary Frame Specification (DSO3)
+
 ```
  0                   1                   2                   3
  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
@@ -388,7 +436,9 @@ CLI Client (HTTP/2 Multiplexed Session)
 ```
 
 ### 5.3 Frame Encoder & Decoder
+
 #### File: `shared/framed-stream.ts`
+
 ```typescript
 export enum FrameType {
   CHUNK_DATA = 0x01,
@@ -426,10 +476,10 @@ export function decodeFrameHeader(headerBuf: Buffer): {
 
 ## 6. Enterprise Integration Roadmap
 
-| Pillar | Subsystem | Target Milestone | Performance Impact |
-| :--- | :--- | :--- | :--- |
-| **OTel Tracing** | API & CLI | Q1 Milestone | Full distributed observability with microsecond latency attribution |
-| **Session Machine** | CLI State DB | Q1 Milestone | Instant crash-resumption for multi-gigabyte directory transfers |
-| **Bandwidth Shaper**| CLI Push | Q2 Milestone | Guaranteed uplink QoS without ISP packet drops or socket resets |
-| **CAS Ref-Count GC**| Server Database| Q2 Milestone | Zero S3 inventory scan latency; instant synchronous dereferencing |
-| **H2 Frame Streaming**| Ingestion Wire | Q3 Milestone | $4\times$ throughput acceleration on high-latency WAN links |
+| Pillar                 | Subsystem       | Target Milestone | Performance Impact                                                  |
+| :--------------------- | :-------------- | :--------------- | :------------------------------------------------------------------ |
+| **OTel Tracing**       | API & CLI       | Q1 Milestone     | Full distributed observability with microsecond latency attribution |
+| **Session Machine**    | CLI State DB    | Q1 Milestone     | Instant crash-resumption for multi-gigabyte directory transfers     |
+| **Bandwidth Shaper**   | CLI Push        | Q2 Milestone     | Guaranteed uplink QoS without ISP packet drops or socket resets     |
+| **CAS Ref-Count GC**   | Server Database | Q2 Milestone     | Zero S3 inventory scan latency; instant synchronous dereferencing   |
+| **H2 Frame Streaming** | Ingestion Wire  | Q3 Milestone     | $4\times$ throughput acceleration on high-latency WAN links         |

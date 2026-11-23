@@ -29,8 +29,8 @@ function Index() {
               </h1>
               <p className="mt-6 max-w-xl text-lg leading-relaxed text-muted-foreground">
                 Deltasync is a delta-based file synchronization engine. It uses a rolling Adler-32
-                hash to detect shifted content in O(1) per byte, then verifies matches with SHA-256
-                — so a 4&nbsp;GB file with a 1% edit transfers in 40&nbsp;MB, not 4&nbsp;GB.
+                hash to detect shifted content in O(1) per byte, then verifies matches with SHA-256:
+                a 4&nbsp;GB file with a 1% edit transfers in 40&nbsp;MB, not 4&nbsp;GB.
               </p>
               <div className="mt-8 flex flex-wrap gap-3">
                 <Link
@@ -149,9 +149,34 @@ computing delta ................. 41 changed
         </div>
       </section>
 
-      <footer className="border-t border-border">
-        <div className="mx-auto max-w-7xl px-6 py-8 font-mono text-xs text-muted-foreground">
-          deltasync · distributed systems · © 2026
+      <footer className="border-t border-border bg-card/20">
+        <div className="mx-auto max-w-7xl px-6 py-10">
+          <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
+            <div className="flex items-center gap-2 font-mono text-xs text-muted-foreground">
+              <span className="inline-flex h-5 w-5 items-center justify-center rounded-sm bg-primary text-primary-foreground font-bold">
+                δ
+              </span>
+              <span>deltasync</span>
+              <span>· distributed systems engine · © 2026</span>
+            </div>
+            <nav className="flex flex-wrap items-center gap-6 font-mono text-xs text-muted-foreground">
+              <Link to="/playground" className="transition-colors hover:text-foreground">
+                Playground
+              </Link>
+              <Link to="/docs" className="transition-colors hover:text-foreground">
+                Documentation
+              </Link>
+              <Link to="/dashboard" className="transition-colors hover:text-foreground">
+                Dashboard
+              </Link>
+              <Link to="/privacy" className="transition-colors hover:text-foreground">
+                Privacy Policy
+              </Link>
+              <Link to="/terms" className="transition-colors hover:text-foreground">
+                Terms of Service
+              </Link>
+            </nav>
+          </div>
         </div>
       </footer>
     </div>

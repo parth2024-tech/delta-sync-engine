@@ -13,7 +13,7 @@ import {
 export const Route = createFileRoute("/playground")({
   head: () => ({
     meta: [
-      { title: "Playground — Deltasync" },
+      { title: "Playground | Deltasync" },
       {
         name: "description",
         content:
@@ -117,7 +117,7 @@ function Playground() {
         <h1 className="mb-2 font-display text-3xl font-bold">Delta playground</h1>
         <p className="mb-8 max-w-2xl text-muted-foreground">
           Edit the two file versions below (or upload your own). The full rsync algorithm runs in
-          your browser — Adler-32 rolling hash, SHA-256 verify, delta op generation, and
+          your browser using Adler-32 rolling hash, SHA-256 verification, delta op generation, and
           byte-perfect reconstruction.
         </p>
 

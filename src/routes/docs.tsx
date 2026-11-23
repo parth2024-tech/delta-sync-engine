@@ -4,7 +4,7 @@ import { SiteHeader } from "@/components/site-header";
 export const Route = createFileRoute("/docs")({
   head: () => ({
     meta: [
-      { title: "Docs — Deltasync" },
+      { title: "Docs | Deltasync" },
       {
         name: "description",
         content: "Protocol documentation and CLI usage for the deltasync engine.",
@@ -39,10 +39,10 @@ function Docs() {
                 <code className="text-primary">length</code>
               </li>
               <li>
-                <code className="text-primary">weak</code> — Adler-32 (32-bit)
+                <code className="text-primary">weak</code>: Adler-32 (32-bit)
               </li>
               <li>
-                <code className="text-primary">strong</code> — SHA-256 (hex)
+                <code className="text-primary">strong</code>: SHA-256 (hex)
               </li>
             </ul>
           </section>
@@ -67,12 +67,12 @@ hash = (B' << 16) | A'`}
               3. Two-level lookup
             </h2>
             <p>
-              A 16-bit hash table maps <code className="text-primary">weak16</code> → candidate
-              block list. On a weak hit, the window is verified with SHA-256 — collision-proof. On a
-              confirmed match the algorithm emits a <code className="text-reuse">COPY</code> op and
-              jumps the window forward by <code className="text-primary">blockSize</code>. Otherwise
-              the leftmost byte joins a <code className="text-literal">LITERAL</code> run and the
-              window slides by 1.
+              A 16-bit hash table maps <code className="text-primary">weak16</code> to candidate
+              block lists. On a weak hit, the window is verified with SHA-256 (collision-proof). On
+              a confirmed match the algorithm emits a <code className="text-reuse">COPY</code> op
+              and jumps the window forward by <code className="text-primary">blockSize</code>.
+              Otherwise the leftmost byte joins a <code className="text-literal">LITERAL</code> run
+              and the window slides by 1.
             </p>
           </section>
 
@@ -95,7 +95,7 @@ LITERAL length:u32       bytes:u8[len]   // length + payload`}
             <p>
               The reference CLI keeps a SQLite database at
               <code className="text-primary"> .deltasync/cache.db</code> with tables for files,
-              versions, and block hashes — so unchanged files between runs skip re-hashing entirely.
+              versions, and block hashes, skipping re-hashing for unchanged files.
             </p>
           </section>
         </article>

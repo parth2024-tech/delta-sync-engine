@@ -72,14 +72,14 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Deltasync — Delta-Based File Synchronization Engine" },
+      { title: "Deltasync | Delta-Based File Synchronization Engine" },
       {
         name: "description",
         content:
           "Sync large files over slow networks by transferring only the changed bytes. Rolling-hash rsync engine with a live in-browser demo.",
       },
       { name: "author", content: "Deltasync" },
-      { property: "og:title", content: "Deltasync — only the bytes that changed" },
+      { property: "og:title", content: "Deltasync: Transfer Only Changed Bytes" },
       {
         property: "og:description",
         content:
@@ -96,7 +96,9 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
         rel: "stylesheet",
         href: "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap",
       },
-      { rel: "icon", href: "data:image/x-icon;," },
+      { rel: "icon", href: "/icon.svg", type: "image/svg+xml" },
+      { rel: "alternate icon", href: "/favicon.ico" },
+      { rel: "apple-touch-icon", href: "/apple-touch-icon.png" },
       { rel: "stylesheet", href: appCss },
     ],
   }),

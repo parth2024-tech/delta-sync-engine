@@ -193,7 +193,7 @@ export const downloadVersion = createServerFn({ method: "POST" })
       offset += part.length;
     }
 
-    const b64 = btoa(String.fromCharCode(...out));
+    const b64 = Buffer.from(out).toString("base64");
     const filename = file.path.split("/").pop() ?? "download";
     return { data: b64, filename };
   });

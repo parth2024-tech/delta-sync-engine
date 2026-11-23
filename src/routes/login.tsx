@@ -5,7 +5,7 @@ import { signIn, signUp } from "@/lib/auth.functions";
 export const Route = createFileRoute("/login")({
   head: () => ({
     meta: [
-      { title: "Sign In — Deltasync" },
+      { title: "Sign In | Deltasync" },
       { name: "description", content: "Sign in to your Deltasync account." },
     ],
   }),

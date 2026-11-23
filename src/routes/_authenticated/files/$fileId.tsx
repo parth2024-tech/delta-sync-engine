@@ -1,9 +1,10 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import { getFileDetail, downloadVersion } from "@/lib/sync.functions";
 
 export const Route = createFileRoute("/_authenticated/files/$fileId")({
-  head: () => ({ meta: [{ title: "File Detail — Deltasync" }] }),
+  head: () => ({ meta: [{ title: "File Detail | Deltasync" }] }),
   component: FileDetail,
 });
 
@@ -22,7 +23,6 @@ function BlockHeatmap({
   prevStrongHashes: Set<string>;
 }) {
   if (blocks.length === 0) return null;
-  const cols = Math.min(blocks.length, 32);
   return (
     <div className="flex flex-wrap gap-1 mt-2">
       {blocks.map((b) => {
@@ -30,7 +30,7 @@ function BlockHeatmap({
         return (
           <div
             key={b.blockIndex}
-            title={`Block ${b.blockIndex} — ${reused ? "reused" : "new"}`}
+            title={`Block ${b.blockIndex} (${reused ? "reused" : "new"})`}
             className={`h-3 w-3 rounded-sm ${reused ? "bg-emerald-500/70" : "bg-amber-400/70"}`}
           />
         );
@@ -49,21 +49,44 @@ function BlockHeatmap({
 
 function FileDetail() {
   const { fileId } = Route.useParams();
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [copiedSha, setCopiedSha] = useState<string | null>(null);
+
   const { data, isLoading, error } = useQuery({
     queryKey: ["file-detail", fileId],
     queryFn: () => getFileDetail({ data: { fileId } }),
   });
 
   async function handleDownload(vId: string, filename: string) {
-    const result = await downloadVersion({ data: { fileId, versionId: vId } });
-    const bytes = Uint8Array.from(atob(result.data), (c) => c.charCodeAt(0));
-    const blob = new Blob([bytes]);
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
+    setDownloadingId(vId);
+    try {
+      const result = await downloadVersion({ data: { fileId, versionId: vId } });
+      const binary = atob(result.data);
+      const len = binary.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      const blob = new Blob([bytes]);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Download failed:", err);
+      alert("Download failed. Check server logs.");
+    } finally {
+      setDownloadingId(null);
+    }
+  }
+
+  function copySha(sha: string, vId: string) {
+    navigator.clipboard.writeText(sha).then(() => {
+      setCopiedSha(vId);
+      setTimeout(() => setCopiedSha(null), 2000);
+    });
   }
 
   if (isLoading)
@@ -77,7 +100,12 @@ function FileDetail() {
   if (error || !data)
     return (
       <Shell>
-        <p className="text-red-400 font-mono text-sm">File not found.</p>
+        <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-6 font-mono text-sm">
+          <p className="text-red-400 font-semibold">File record not found.</p>
+          <Link to="/files" className="mt-3 inline-block text-xs text-primary hover:underline">
+            ← Return to file catalog
+          </Link>
+        </div>
       </Shell>
     );
 
@@ -121,6 +149,8 @@ function FileDetail() {
               ? new Set(versionBlocks[idx + 1].blocks.map((b) => b.strongHash))
               : new Set<string>();
 
+          const isDownloading = downloadingId === version.id;
+
           return (
             <div key={version.id} className="relative pl-6">
               <div className="absolute -left-[9px] top-1 h-4 w-4 rounded-full border-2 border-primary bg-background" />
@@ -134,15 +164,24 @@ function FileDetail() {
                       {fmt(Number(version.size))} · {version.totalBlocks} blocks · block size{" "}
                       {version.blockSize}B
                     </span>
-                    <p className="mt-0.5 font-mono text-[10px] text-muted-foreground/60 break-all">
-                      sha256: {version.contentSha256.slice(0, 32)}…
-                    </p>
+                    <div className="mt-1 flex items-center gap-2">
+                      <p className="font-mono text-[10px] text-muted-foreground/80 break-all">
+                        sha256: {version.contentSha256.slice(0, 32)}…
+                      </p>
+                      <button
+                        onClick={() => copySha(version.contentSha256, version.id)}
+                        className="rounded border border-border px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground hover:bg-secondary hover:text-foreground"
+                      >
+                        {copiedSha === version.id ? "✓ copied" : "copy hash"}
+                      </button>
+                    </div>
                   </div>
                   <button
+                    disabled={isDownloading}
                     onClick={() => handleDownload(version.id, file.path.split("/").pop() ?? "file")}
-                    className="shrink-0 rounded border border-border px-3 py-1 font-mono text-xs hover:bg-secondary"
+                    className="shrink-0 rounded border border-border px-3 py-1 font-mono text-xs hover:bg-secondary disabled:opacity-50"
                   >
-                    ↓ download
+                    {isDownloading ? "↓ downloading…" : "↓ download"}
                   </button>
                 </div>
                 <BlockHeatmap blocks={blocks} prevStrongHashes={prevHashes} />
@@ -160,7 +199,7 @@ function Shell({ children }: { children: React.ReactNode }) {
     <div className="mx-auto max-w-7xl px-6 py-8">
       <div className="mb-6">
         <Link to="/files" className="font-mono text-xs text-muted-foreground hover:text-foreground">
-          ← files
+          ← Return to files
         </Link>
       </div>
       <p className="mb-1 font-mono text-xs uppercase tracking-widest text-primary">

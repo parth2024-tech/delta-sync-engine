@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0b0f19"/>
+      <stop offset="100%" stop-color="#030712"/>
+    </linearGradient>
+    <linearGradient id="delta" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#06b6d4"/>
+      <stop offset="50%" stop-color="#22d3ee"/>
+      <stop offset="100%" stop-color="#34d399"/>
+    </linearGradient>
+    <linearGradient id="strokeGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#0ea5e9" stop-opacity="0.1"/>
+    </linearGradient>
+  </defs>
+  <!-- Background squircle -->
+  <rect x="16" y="16" width="480" height="480" rx="96" fill="url(#bg)" stroke="url(#strokeGrad)" stroke-width="8"/>
+  <!-- Geometric Delta glyph (Triangle with split block data-flow) -->
+  <path d="M256 96 L400 376 H112 Z" fill="none" stroke="url(#delta)" stroke-width="36" stroke-linejoin="round" stroke-linecap="round"/>
+  <!-- Center block / sync sync point -->
+  <circle cx="256" cy="276" r="28" fill="#22d3ee"/>
+  <circle cx="204" cy="376" r="14" fill="#34d399"/>
+  <circle cx="308" cy="376" r="14" fill="#06b6d4"/>
+</svg>
